@@ -89,7 +89,7 @@ The Home Assistant API requires `Authorization: Bearer <HA token>`. See the offi
 - A host path containing the Home Assistant configuration if filesystem, checkpoint, editor mutation safety, or Git features are needed.
 - Host ownership/permissions that allow the configured non-root UID/GID to read and write that path.
 
-The image is built locally; no published registry image is assumed.
+GitHub releases publish multi-architecture images to [`docker.io/lemanjo/hac-mcp`](https://hub.docker.com/r/lemanjo/hac-mcp). Use an exact release tag rather than `latest` for reproducible deployments. Local builds remain supported.
 
 ### Create A Home Assistant Token
 
@@ -131,6 +131,13 @@ docker compose build --pull
 docker compose up -d
 docker compose ps
 docker compose logs -f hac-mcp
+```
+
+To use a published release instead of building locally, set an exact image tag and disable builds:
+
+```bash
+MCP_IMAGE=docker.io/lemanjo/hac-mcp:0.1.0 docker compose pull hac-mcp
+MCP_IMAGE=docker.io/lemanjo/hac-mcp:0.1.0 docker compose up -d --no-build hac-mcp
 ```
 
 Health endpoints:
@@ -531,6 +538,24 @@ pnpm build
 - Transitive overrides pin eligible `content-type` and `hono` releases while newer versions remain inside the quarantine window, and pin `undici-types` to an attested release that does not downgrade publisher trust. Re-evaluate, but do not automatically remove, these overrides during a reviewed dependency update.
 - CI actions and container base images use immutable commit or content digests. Runtime Debian packages come from a dated snapshot, so rebuilding does not silently upgrade them.
 - Do not add a `minimumReleaseAgeExclude` exception. For an urgent security release, wait until it has aged seven days or obtain explicit approval to change this policy in a reviewed change.
+
+### Publishing Releases
+
+Publishing a GitHub release with a SemVer tag such as `v0.1.0` runs `.github/workflows/release-docker.yml`. It builds `linux/amd64` and `linux/arm64` images, pushes the version tag to `docker.io/lemanjo/hac-mcp`, and attaches SBOM and provenance attestations. Stable releases also update `latest`; prereleases do not.
+
+The repository needs these GitHub Actions secrets:
+
+- `DOCKERHUB_USERNAME`: Docker Hub account name, currently `lemanjo`.
+- `DOCKERHUB_TOKEN`: a Docker Hub personal access token with read/write permission for `lemanjo/hac-mcp`. Do not use the account password.
+
+Add them under **GitHub repository > Settings > Secrets and variables > Actions > New repository secret**, or with GitHub CLI:
+
+```bash
+gh secret set DOCKERHUB_USERNAME --repo lemanjo/hac-mcp --body lemanjo
+gh secret set DOCKERHUB_TOKEN --repo lemanjo/hac-mcp
+```
+
+The second command securely prompts for the token value. Do not store the token in `.env`, workflow YAML, shell history, or the repository.
 
 HTTP development:
 

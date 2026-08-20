@@ -128,6 +128,12 @@ for (const workflowPath of await listFiles(".github/workflows")) {
   ) {
     errors.push(`${workflowPath} must pin the Buildx binary version.`);
   }
+  if (
+    /docker\/setup-qemu-action@/.test(workflow) &&
+    !/^\s*image:\s*\S+@sha256:[a-f0-9]{64}$/m.test(workflow)
+  ) {
+    errors.push(`${workflowPath} must pin the QEMU helper image digest.`);
+  }
 }
 
 for (const dockerfilePath of ["Dockerfile", ".devcontainer/Dockerfile"]) {
