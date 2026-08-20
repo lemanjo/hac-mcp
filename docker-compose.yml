@@ -1,0 +1,79 @@
+services:
+  hac-mcp:
+    image: "${MCP_IMAGE:-home-assistant-admin-mcp:local}"
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    stop_grace_period: 20s
+    environment:
+      NODE_ENV: production
+      HOME_ASSISTANT_URL: "${HOME_ASSISTANT_URL:?Set HOME_ASSISTANT_URL in .env}"
+      HOME_ASSISTANT_TOKEN_FILE: /run/secrets/home_assistant_token
+      HA_REQUEST_TIMEOUT_MS: "${HA_REQUEST_TIMEOUT_MS:-30000}"
+      HA_WEBSOCKET_TIMEOUT_MS: "${HA_WEBSOCKET_TIMEOUT_MS:-30000}"
+      HA_VERIFY_TLS: "${HA_VERIFY_TLS:-true}"
+      MCP_CONFIG_FILE: /app/config.yaml
+      MCP_AUTH_TOKEN_FILE: /run/secrets/mcp_auth_token
+      MCP_MODE: "${MCP_MODE:-read_only}"
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "3000"
+      MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,hac-mcp}"
+      MCP_ALLOWED_ORIGINS: "${MCP_ALLOWED_ORIGINS:-}"
+      HA_CONFIG_PATH: /ha-config
+      HA_FILESYSTEM_ENABLED: "${HA_FILESYSTEM_ENABLED:-true}"
+      HA_ALLOW_SECRET_VALUES: "${HA_ALLOW_SECRET_VALUES:-false}"
+      HA_ALLOW_CUSTOM_COMPONENTS: "${HA_ALLOW_CUSTOM_COMPONENTS:-false}"
+      HA_GIT_ENABLED: "${HA_GIT_ENABLED:-true}"
+    ports:
+      - "${MCP_BIND_IP:-127.0.0.1}:${MCP_PUBLISHED_PORT:-3000}:3000"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - type: bind
+        source: "${HA_CONFIG_PATH:?Set HA_CONFIG_PATH in .env}"
+        target: /ha-config
+        read_only: false
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${MCP_SETTINGS_FILE:-./config.example.yaml}"
+        target: /app/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    secrets:
+      - home_assistant_token
+      - mcp_auth_token
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const p=process.env.MCP_PORT||'3000';fetch('http://127.0.0.1:'+p+'/livez').then(r=>{if(!r.ok)throw new Error(String(r.status))}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - default
+
+secrets:
+  home_assistant_token:
+    file: "${HA_TOKEN_SECRET_FILE:-./secrets/home_assistant_token}"
+  mcp_auth_token:
+    file: "${MCP_TOKEN_SECRET_FILE:-./secrets/mcp_auth_token}"
+
+networks:
+  default:
+    driver: bridge

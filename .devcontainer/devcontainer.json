@@ -1,0 +1,25 @@
+{
+  "name": "Home Assistant Container MCP",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "PNPM_VERSION": "11.21.0",
+      "OPENCODE_VERSION": "1.18.18",
+      "GH_VERSION": "2.97.0"
+    }
+  },
+  "init": true,
+  "remoteUser": "node",
+  "updateRemoteUserUID": true,
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint@3.0.10"
+      ],
+      "settings": {
+        "extensions.autoCheckUpdates": false,
+        "extensions.autoUpdate": false
+      }
+    }
+  }
+}

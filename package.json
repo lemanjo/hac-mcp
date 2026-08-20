@@ -1,0 +1,56 @@
+{
+  "name": "home-assistant-admin-mcp",
+  "version": "0.1.0",
+  "description": "Safety-first administrative MCP server for Home Assistant",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lemanjo/hac-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lemanjo/hac-mcp/issues"
+  },
+  "homepage": "https://github.com/lemanjo/hac-mcp#readme",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.21.0+sha512.521705bce689924eac72f5a3587122f362689ef6571e55ba80076fd637c11132ecffada26fad4ea79c485bfddbfd3d5a2a5b05805a77e893de71ec8a6cca3bb1",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "supply-chain:check": "node scripts/check-supply-chain.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/express": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "diff": "8.0.4",
+    "express": "5.2.1",
+    "ws": "8.21.3",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/diff": "7.0.2",
+    "@types/express": "5.0.6",
+    "@types/node": "22.20.1",
+    "@types/ws": "8.18.1",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.6",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "3.2.7"
+  }
+}

@@ -1,0 +1,51 @@
+# HOME_ASSISTANT_TOKEN_FILE and MCP_AUTH_TOKEN_FILE are intentionally supplied
+# outside this file. With HTTP transport, both are injected by docker-compose.yml.
+homeAssistant:
+  url: http://host.docker.internal:8123
+  requestTimeoutMs: 30000
+  websocketTimeoutMs: 30000
+  verifyTls: true
+
+mcp:
+  mode: read_only
+  transport: http
+  host: 0.0.0.0
+  port: 3000
+  allowedHosts:
+    - localhost
+    - 127.0.0.1
+    - hac-mcp
+  allowedOrigins: []
+  maxRequestBytes: 1048576
+
+filesystem:
+  root: /ha-config
+  enabled: true
+  allowSecretsMetadata: true
+  allowSecretValues: false
+  allowCustomComponents: false
+  allowedDirectories:
+    - packages
+    - themes
+  maxReadBytes: 2097152
+  backupDirectory: .ha-mcp/backups
+
+git:
+  enabled: true
+  authorName: Home Assistant Admin MCP
+  authorEmail: home-assistant-admin-mcp@example.invalid
+
+permissions:
+  requireConfirmationFor:
+    - HIGH_IMPACT
+  sensitiveDomains:
+    lock: confirm
+    alarm_control_panel: confirm
+    siren: confirm
+  sensitiveCovers:
+    - garage
+    - gate
+
+cache:
+  registryTtlMs: 30000
+  servicesTtlMs: 30000

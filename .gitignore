@@ -1,0 +1,37 @@
+# Dependencies and generated output
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+
+# Local environment and runtime configuration
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+/config.yaml
+/config.local.yaml
+/config.*.local.yaml
+
+# Credentials and Home Assistant secret storage
+/secrets/
+secrets.yaml
+secrets.yml
+.storage/
+.npmrc
+.netrc
+*.key
+*.pem
+*.p12
+*.pfx
+*.der
+*.token
+*_token
+
+# Runtime state and logs
+*.log
+.ha-mcp/
+*.db
+*.sqlite
+*.sqlite3
