@@ -25,13 +25,13 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime
 RUN printf '%s\n' \
       'Types: deb' \
-      'URIs: https://snapshot.debian.org/archive/debian/20260805T000000Z' \
+      'URIs: http://snapshot.debian.org/archive/debian/20260805T000000Z' \
       'Suites: bookworm bookworm-updates' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
       '' \
       'Types: deb' \
-      'URIs: https://snapshot.debian.org/archive/debian-security/20260805T000000Z' \
+      'URIs: http://snapshot.debian.org/archive/debian-security/20260805T000000Z' \
       'Suites: bookworm-security' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
