@@ -557,6 +557,12 @@ gh secret set DOCKERHUB_TOKEN --repo lemanjo/hac-mcp
 
 The second command securely prompts for the token value. Do not store the token in `.env`, workflow YAML, shell history, or the repository.
 
+Every push to `main`, including a merged pull request, runs `.github/workflows/nightly-docker.yml`. It uses the separate `DOCKERHUB_NIGHTLY_TOKEN` secret and publishes `nightly` plus an immutable `nightly-<full-commit-sha>` tag. The workflow can also be started manually from GitHub Actions. Use the full-SHA tag when reproducibility matters.
+
+```bash
+gh secret set DOCKERHUB_NIGHTLY_TOKEN --repo lemanjo/hac-mcp
+```
+
 HTTP development:
 
 ```bash
