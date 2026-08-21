@@ -171,18 +171,138 @@ Allowed hosts and origin hostnames mitigate DNS-rebinding/cross-origin access; t
 
 ## Unraid
 
-Unraid exposes user shares under `/mnt/user`; see the official [share documentation](https://docs.unraid.net/unraid-os/using-unraid-to/manage-storage/shares/). A typical layout is `/mnt/user/appdata/hac-mcp` for this checkout/secrets and the actual Home Assistant appdata directory for `HA_CONFIG_PATH`.
+Unraid exposes user shares under `/mnt/user`; see the official [share documentation](https://docs.unraid.net/unraid-os/using-unraid-to/manage-storage/shares/). The Docker UI can run the published image directly, without this source checkout or a Docker socket.
 
-1. Put the project and secret files in a private appdata location. Keep secret files mode `0600` and the directory mode `0700` where practical.
-2. Set `HA_CONFIG_PATH` to the exact Home Assistant config directory, for example `/mnt/user/appdata/home-assistant`. Do not mount all of `/mnt/user`.
-3. Set `PUID=99` and `PGID=100` only if the Home Assistant files are owned for Unraid's usual `nobody:users` account; otherwise use the actual non-root owner. Confirm that this identity can create `/ha-config/.ha-mcp/backups` and atomically replace allowed YAML files.
-4. If the Docker Compose Manager community plugin or a Compose v2 CLI is installed, run the Compose setup above from the project directory. Compose secrets appear as files under `/run/secrets`; Docker documents that behavior [here](https://docs.docker.com/compose/how-tos/use-secrets/).
-5. Without Compose, build `home-assistant-admin-mcp:local` and create the container in Unraid's Docker UI using **Advanced View**. Mirror the environment, port, and path settings from `docker-compose.yml`. Bind the two token files read-only to `/run/secrets/home_assistant_token` and `/run/secrets/mcp_auth_token`; these UI bind mounts provide the file interface expected by the app but are not Compose secret objects.
-6. Use bridge networking by default. If Home Assistant uses host networking, point `HOME_ASSISTANT_URL` at the Unraid LAN IP and Home Assistant port, or add `host.docker.internal:host-gateway`. If Home Assistant has its own `br0` LAN IP, use that IP. If both containers share a custom Docker network, use Home Assistant's network alias.
-7. For LAN MCP access, publish container port `3000`, bind it intentionally, and include the Unraid IP/DNS name in `MCP_ALLOWED_HOSTS`. Keep the bearer token and firewall restriction even on a trusted LAN.
-8. Do not add a Docker socket path. Supervisor/container administration is not required or supported.
+### Choose An Image
 
-Unraid's Mover or share settings can change where a user-share file is physically stored without changing `/mnt/user/...`; use one stable user-share path and do not mix equivalent `/mnt/user` and `/mnt/diskX` paths.
+Use an exact release tag such as `lemanjo/hac-mcp:0.1.0` for production. Until a stable release is available, `lemanjo/hac-mcp:nightly` can be used for evaluation, but it changes on every `main` commit. Do not use `latest` when reproducibility matters. When using a release, download `config.example.yaml` from the matching Git tag.
+
+### Prepare Appdata And Secrets
+
+Open the Unraid terminal as `root`. Adjust `HA_CONFIG`, `RUN_UID`, and `RUN_GID` to match the actual Home Assistant configuration ownership. The example uses Unraid's common `nobody:users` identity (`99:100`); do not assume it is correct for every Home Assistant installation.
+
+```bash
+APPDATA=/mnt/user/appdata/hac-mcp
+HA_CONFIG=/mnt/user/appdata/home-assistant
+RUN_UID=99
+RUN_GID=100
+IMAGE=lemanjo/hac-mcp:nightly
+CONFIG_REF=main
+
+test -f "$HA_CONFIG/configuration.yaml"
+install -d -o "$RUN_UID" -g "$RUN_GID" -m 700 "$APPDATA/secrets"
+curl --fail --location \
+  --output "$APPDATA/config.yaml" \
+  "https://raw.githubusercontent.com/lemanjo/hac-mcp/${CONFIG_REF}/config.example.yaml"
+openssl rand -hex 32 > "$APPDATA/secrets/mcp_auth_token"
+read -rsp "Home Assistant token: " HA_TOKEN
+printf '%s' "$HA_TOKEN" > "$APPDATA/secrets/home_assistant_token"
+unset HA_TOKEN
+chown "$RUN_UID:$RUN_GID" "$APPDATA/config.yaml" "$APPDATA/secrets/"*
+chmod 600 "$APPDATA/config.yaml" "$APPDATA/secrets/"*
+```
+
+For a release deployment, change the two defaults to matching values, for example `IMAGE=lemanjo/hac-mcp:0.1.0` and `CONFIG_REF=v0.1.0`.
+
+Confirm that the selected identity can access Home Assistant configuration and create checkpoints:
+
+```bash
+stat -c '%u:%g %a %n' "$HA_CONFIG" "$HA_CONFIG/configuration.yaml"
+docker run --rm \
+  --user "$RUN_UID:$RUN_GID" \
+  --volume "$HA_CONFIG:/ha-config" \
+  --entrypoint sh \
+  "$IMAGE" \
+  -c 'test -r /ha-config/configuration.yaml && mkdir -p /ha-config/.ha-mcp/backups'
+```
+
+The `docker run` command exits without output on success. If it fails, correct the selected UID/GID or Home Assistant file permissions. Do not solve the problem by running the service as `root` or mounting all of `/mnt/user`.
+
+### Add The Container
+
+In **Docker > Add Container**, enable **Advanced View** and set:
+
+| Unraid field      | Value                                                                            |
+| ----------------- | -------------------------------------------------------------------------------- |
+| Name              | `hac-mcp`                                                                        |
+| Repository        | `lemanjo/hac-mcp:nightly` for evaluation, or an exact release tag for production |
+| Network Type      | `bridge` unless using a deliberate shared custom network                         |
+| Privileged        | `Off`                                                                            |
+| WebUI             | `http://[IP]:[PORT:3000]/livez`                                                  |
+| Console shell     | `sh`                                                                             |
+| Extra Parameters  | See the command below; replace `99:100` with the selected numeric UID/GID        |
+| Port              | Container `3000`, host `3000`, protocol `TCP`                                    |
+| Restart/Autostart | Enable Unraid autostart after the configuration has been tested                  |
+
+Use these **Extra Parameters** on one line:
+
+```text
+--user=99:100 --read-only --security-opt=no-new-privileges:true --cap-drop=ALL --pids-limit=256 --stop-timeout=20 --tmpfs=/tmp:rw,noexec,nosuid,size=64m
+```
+
+Add these paths. Do not mount `/var/run/docker.sock`.
+
+| Host path                                                                    | Container path                      | Access     |
+| ---------------------------------------------------------------------------- | ----------------------------------- | ---------- |
+| `/mnt/user/appdata/hac-mcp/config.yaml`                                      | `/app/config.yaml`                  | Read Only  |
+| `/mnt/user/appdata/hac-mcp/secrets/home_assistant_token`                     | `/run/secrets/home_assistant_token` | Read Only  |
+| `/mnt/user/appdata/hac-mcp/secrets/mcp_auth_token`                           | `/run/secrets/mcp_auth_token`       | Read Only  |
+| Actual Home Assistant config, for example `/mnt/user/appdata/home-assistant` | `/ha-config`                        | Read/Write |
+
+Add these variables:
+
+| Variable                     | Example or required value                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `HOME_ASSISTANT_URL`         | `http://192.168.1.10:8123`; it must be reachable from the container                                      |
+| `HOME_ASSISTANT_TOKEN_FILE`  | `/run/secrets/home_assistant_token`                                                                      |
+| `HA_VERIFY_TLS`              | `true`                                                                                                   |
+| `HA_REQUEST_TIMEOUT_MS`      | `30000`                                                                                                  |
+| `HA_WEBSOCKET_TIMEOUT_MS`    | `30000`                                                                                                  |
+| `MCP_CONFIG_FILE`            | `/app/config.yaml`                                                                                       |
+| `MCP_AUTH_TOKEN_FILE`        | `/run/secrets/mcp_auth_token`                                                                            |
+| `MCP_MODE`                   | Start with `read_only`                                                                                   |
+| `MCP_TRANSPORT`              | `http`                                                                                                   |
+| `MCP_HOST`                   | `0.0.0.0`                                                                                                |
+| `MCP_PORT`                   | `3000`                                                                                                   |
+| `MCP_ALLOWED_HOSTS`          | Exact client-facing names/IPs, for example `192.168.1.10,tower,tower.local,localhost,127.0.0.1,hac-mcp`  |
+| `MCP_ALLOWED_ORIGINS`        | Leave empty for non-browser clients                                                                      |
+| `HA_CONFIG_PATH`             | `/ha-config`                                                                                             |
+| `HA_FILESYSTEM_ENABLED`      | `true`, or `false` for API-only operation                                                                |
+| `HA_ALLOW_SECRET_VALUES`     | `false`                                                                                                  |
+| `HA_ALLOW_CUSTOM_COMPONENTS` | `false`                                                                                                  |
+| `HA_GIT_ENABLED`             | `true` only when the mounted Home Assistant configuration is already a Git repository; otherwise `false` |
+
+Do not add `PUID` or `PGID` as application variables in the Docker UI; Compose uses them to populate Docker's `user` setting, but the application does not consume them. Set the identity with `--user` in **Extra Parameters**.
+
+### Unraid Networking
+
+- If Home Assistant uses host networking, `localhost` from `hac-mcp` is the MCP container, not Unraid. Use the Unraid LAN IP and Home Assistant port in `HOME_ASSISTANT_URL`.
+- If Home Assistant has a dedicated `br0`/LAN IP, use that IP.
+- If both containers use the same custom Docker network, select it for `hac-mcp` and use Home Assistant's container name or network alias.
+- For MCP clients on the LAN, connect to `http://<unraid-ip>:3000/mcp` and include that IP or DNS name in `MCP_ALLOWED_HOSTS`.
+- The server does not terminate TLS. Put it behind a trusted reverse proxy before crossing an untrusted network, and do not expose port `3000` directly to the internet.
+
+### Verify And Connect
+
+Apply the container configuration and inspect **Docker > hac-mcp > Logs**. Then run from the Unraid terminal:
+
+```bash
+curl --fail http://127.0.0.1:3000/livez
+curl --fail http://127.0.0.1:3000/readyz
+docker inspect --format '{{json .State.Health}}' hac-mcp
+```
+
+`/livez` confirms the process is running. `/readyz` confirms the Home Assistant URL and token work; a `503` usually means Home Assistant is unreachable, the token is invalid, or the token's user lacks access. Configure Codex, OpenCode, or Claude Code with `http://<unraid-ip>:3000/mcp` and the contents of `$APPDATA/secrets/mcp_auth_token` using the client instructions below.
+
+### Updates And Backups
+
+- For stable deployments, change the Repository field to a reviewed exact release tag, apply the container changes, and verify both health endpoints. Do not enable blind automatic image updates.
+- The mutable `nightly` tag is for testing. Unraid pulls a changed tag only when you explicitly update the container or use an update mechanism.
+- Back up `/mnt/user/appdata/hac-mcp` and the mounted Home Assistant configuration, including `.ha-mcp/backups` if filesystem transactions are enabled.
+- Rotate either token by replacing its file without a trailing blank line and restarting the container.
+- Unraid's Mover can change physical storage without changing `/mnt/user/...`; consistently use the user-share path and do not mix `/mnt/user` with `/mnt/diskX` paths.
+
+If the Docker Compose Manager community plugin or a Compose v2 CLI is installed, the earlier [Compose Setup](#compose-setup) is an alternative to the Docker UI. Set `MCP_IMAGE` to the desired published tag and use `docker compose up -d --no-build`.
 
 ## MCP Clients
 
