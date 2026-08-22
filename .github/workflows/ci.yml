@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -41,9 +43,46 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
           version: v0.36.1
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+          driver-opts: |
+            image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      - name: Build runtime image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
+          load: true
+          platforms: linux/amd64
           push: false
           target: runtime
           tags: home-assistant-admin-mcp:ci
+      - name: Smoke test runtime image
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/node home-assistant-admin-mcp:ci --version
+          docker run --rm --entrypoint /usr/bin/git home-assistant-admin-mcp:ci --version
+          if docker run --rm --entrypoint /bin/sh home-assistant-admin-mcp:ci -c true; then
+            echo "Runtime image unexpectedly contains /bin/sh" >&2
+            exit 1
+          fi
+      - name: Report runtime vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IMAGE_SRC: docker
+        with:
+          version: v0.73.0
+          image-ref: home-assistant-admin-mcp:ci
+          scanners: vuln
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "0"
+      - name: Reject fixable runtime vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IMAGE_SRC: docker
+        with:
+          version: v0.73.0
+          image-ref: home-assistant-admin-mcp:ci
+          scanners: vuln
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: "true"
+          exit-code: "1"

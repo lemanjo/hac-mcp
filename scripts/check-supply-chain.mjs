@@ -134,6 +134,42 @@ for (const workflowPath of await listFiles(".github/workflows")) {
   ) {
     errors.push(`${workflowPath} must pin the QEMU helper image digest.`);
   }
+  if (
+    /docker\/setup-buildx-action@/.test(workflow) &&
+    !/^\s*image=moby\/buildkit:v\d+\.\d+\.\d+@sha256:[a-f0-9]{64}$/m.test(workflow)
+  ) {
+    errors.push(`${workflowPath} must pin the BuildKit daemon image and digest.`);
+  }
+  if (/docker\/build-push-action@/.test(workflow)) {
+    if (!/aquasecurity\/trivy-action@[a-f0-9]{40}/.test(workflow)) {
+      errors.push(`${workflowPath} must scan the runtime image with a pinned Trivy action.`);
+    }
+    if (!/^\s*version:\s*v\d+\.\d+\.\d+$/m.test(workflow)) {
+      errors.push(`${workflowPath} must pin the Trivy binary version.`);
+    }
+    if (!/^\s*severity:\s*UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL$/m.test(workflow)) {
+      errors.push(`${workflowPath} must report every vulnerability severity.`);
+    }
+    if (!/^\s*ignore-unfixed:\s*["']true["']$/m.test(workflow)) {
+      errors.push(`${workflowPath} must include a blocking scan for fixable vulnerabilities.`);
+    }
+    if (!/^\s*exit-code:\s*["']1["']$/m.test(workflow)) {
+      errors.push(`${workflowPath} must fail when the blocking vulnerability scan finds issues.`);
+    }
+  }
+  const pushIndex = workflow.indexOf("push: true");
+  if (pushIndex !== -1) {
+    const scanIndex = workflow.indexOf("name: Reject fixable");
+    if (scanIndex === -1 || scanIndex > pushIndex) {
+      errors.push(`${workflowPath} must block fixable vulnerabilities before pushing an image.`);
+    }
+    if (/^\s*sbom:\s*true$/m.test(workflow)) {
+      errors.push(`${workflowPath} must not use the mutable default SBOM generator.`);
+    }
+    if (!/^\s*sbom:\s*generator=\S+@sha256:[a-f0-9]{64}$/m.test(workflow)) {
+      errors.push(`${workflowPath} must pin the SBOM generator image digest.`);
+    }
+  }
 }
 
 for (const dockerfilePath of ["Dockerfile", ".devcontainer/Dockerfile"]) {

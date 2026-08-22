@@ -384,7 +384,7 @@ pnpm test
 pnpm build
 ```
 
-Every push to `main` publishes `lemanjo/hac-mcp:nightly` and an immutable `nightly-<commit-sha>` image. GitHub releases publish versioned images for `linux/amd64` and `linux/arm64`.
+Every container build reports all known runtime vulnerabilities and fails on fixable findings. Publishing workflows scan both `linux/amd64` and `linux/arm64` before pushing. Every push to `main` publishes `lemanjo/hac-mcp:nightly` and an immutable `nightly-<commit-sha>` image. GitHub releases publish versioned images for both architectures.
 
 > [!NOTE]
 > This project is built with AI-assisted development tools.
