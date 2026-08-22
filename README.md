@@ -33,6 +33,90 @@ The mode is a hard limit. An MCP client cannot raise it.
 
 High-impact actions require `confirm: true` by default. Locks, alarms, sirens, and covers with `garage` or `gate` in the entity ID also require confirmation. These rules can be changed in `config.yaml`.
 
+## Git-backed configuration history
+
+Git support gives file-backed Home Assistant changes an audit trail. After a successful YAML change, the server can create a local commit containing only the files changed by that operation. This makes it easier to see what an AI client changed, compare the working tree with committed configuration, and safely undo the latest service-created commit.
+
+Git complements the transaction checkpoints in `.ha-mcp/backups`: checkpoints support file recovery during validation failures, while Git provides readable long-term history and diffs. Neither replaces a Home Assistant backup.
+
+### Prepare the repository
+
+The Home Assistant configuration directory must already be inside a Git repository. The server deliberately does not initialize repositories, clone, pull, push, or configure remotes. With the standard Docker and Unraid mounts, the simplest arrangement is to initialize the repository directly in the directory mounted at `/ha-config`.
+
+On the Docker host, create a baseline commit before allowing MCP configuration changes. Review the ignore rules and tracked files for your installation; do not commit secrets or Home Assistant runtime data.
+
+```bash
+cd /absolute/path/to/home-assistant/config
+git init
+cat > .gitignore <<'EOF'
+.storage/
+.ha-mcp/
+secrets.yaml
+secrets.yml
+home-assistant_v2.db*
+*.log*
+EOF
+git add .gitignore configuration.yaml
+git -c user.name="Home Assistant owner" \
+  -c user.email="owner@example.com" \
+  commit -m "Baseline Home Assistant configuration"
+```
+
+Add other YAML files and allowed directories, such as `automations.yaml` or `packages/`, only after checking that they contain no credentials. Existing repositories only need to be accessible through the configuration mount.
+
+The container's `PUID` and `PGID` must be able to read and write both the tracked files and the repository's `.git` directory. You can verify access using the same container identity:
+
+```bash
+docker compose run --rm --entrypoint /usr/bin/git hac-mcp \
+  -C /ha-config status --short
+```
+
+Enable the feature in `.env`:
+
+```dotenv
+HA_GIT_ENABLED=true
+```
+
+It is enabled by default in the supplied configuration. Set `HA_GIT_ENABLED=false` if the mounted directory is not a repository and you only want transaction checkpoints.
+
+Set the identity used for service-created commits in `config.yaml` if you want to distinguish installations or environments:
+
+```yaml
+git:
+  enabled: true
+  authorName: Home Assistant Admin MCP
+  authorEmail: home-assistant-admin-mcp@example.invalid
+```
+
+### How it behaves
+
+- `patch_yaml_file` commits by default when Git is enabled. A custom `commit_message` can describe the reason for the change.
+- A dry run returns the proposed diff without writing files or creating a commit.
+- The server creates a checkpoint, writes atomically, validates with Home Assistant, performs the requested reload and health check, and only then creates the Git commit.
+- A commit includes only the configuration paths selected by that operation. Unrelated staged or working-tree changes are left alone.
+- If a target file already had uncommitted changes before the operation, the configuration transaction can still succeed, but the automatic commit is skipped and a warning is returned. Resolve and commit those changes manually before asking the server to try again.
+- Git failures do not undo an otherwise validated Home Assistant change. The result includes a warning, and the checkpoint remains available.
+
+History and diff tools are available in `read_only` mode. Applying configuration changes requires `admin` mode, and rollback additionally requires the normal high-impact confirmation. Git-aware MCP tools include:
+
+| Tool                 | Use                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `get_config_history` | Show bounded commit history for the whole configuration or one allowed file.                            |
+| `get_config_diff`    | Show the current unstaged or staged diff for explicitly allowed paths, with sensitive values redacted.  |
+| `get_recent_changes` | Show recent Git commits alongside transaction checkpoints.                                              |
+| `rollback_to_commit` | Undo the service-created current `HEAD`, create a rollback commit, validate Home Assistant, and reload. |
+| `rollback_change`    | Restore a transaction checkpoint independently of Git history.                                          |
+
+Useful requests include:
+
+- `Show the last 10 configuration changes and explain what changed.`
+- `Show the uncommitted diff for packages/lighting.yaml.`
+- `Dry-run this YAML change and show me the diff. Do not apply or commit it yet.`
+- `Apply the reviewed change with commit message "Adjust evening lighting schedule".`
+- `Dry-run rolling back the latest MCP-created commit, then wait for confirmation.`
+
+For safety, Git rollback is intentionally narrow: it only accepts the current `HEAD`, the commit must use the configured service author email, and affected files must have no newer uncommitted changes. Rollback creates a new commit instead of rewriting history. If Home Assistant validation fails, the server attempts a compensating commit to restore the pre-rollback state.
+
 ## Docker Compose setup
 
 ### Requirements
