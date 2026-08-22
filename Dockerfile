@@ -31,7 +31,7 @@ RUN printf '%s\n' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
       '' \
       'Types: deb' \
-      'URIs: http://snapshot.debian.org/archive/debian-security/20260815T000000Z' \
+      'URIs: http://snapshot.debian.org/archive/debian-security/20260822T000000Z' \
       'Suites: trixie-security' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
@@ -54,7 +54,7 @@ WORKDIR /app
 COPY --from=pnpm-base /usr/local/bin/node /usr/local/bin/node
 COPY --from=production-dependencies --chown=65532:65532 /app/node_modules ./node_modules
 COPY --from=build --chown=65532:65532 /app/dist ./dist
-COPY --chown=65532:65532 package.json LICENSE ./
+COPY --chown=65532:65532 package.json pnpm-lock.yaml LICENSE ./
 
 USER 65532:65532
 EXPOSE 3000

@@ -189,19 +189,22 @@ for (const dockerfilePath of ["Dockerfile", ".devcontainer/Dockerfile"]) {
   }
   if (/apt-get\s/.test(dockerfile)) {
     const snapshots = [
-      ...dockerfile.matchAll(/snapshot\.debian\.org\/archive\/[^/]+\/(\d{8}T\d{6}Z)/g),
+      ...dockerfile.matchAll(/snapshot\.debian\.org\/archive\/([^/]+)\/(\d{8}T\d{6}Z)/g),
     ];
     if (snapshots.length === 0) {
       errors.push(`${dockerfilePath} installs Debian packages without a dated snapshot.`);
     }
     for (const snapshot of snapshots) {
-      const timestamp = snapshot[1].replace(
+      const timestamp = snapshot[2].replace(
         /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/,
         "$1-$2-$3T$4:$5:$6Z",
       );
-      if (Date.now() - Date.parse(timestamp) < 7 * 24 * 60 * 60 * 1000) {
+      const age = Date.now() - Date.parse(timestamp);
+      if (age < 0) {
+        errors.push(`${dockerfilePath} uses future Debian snapshot ${snapshot[2]}.`);
+      } else if (snapshot[1] !== "debian-security" && age < 7 * 24 * 60 * 60 * 1000) {
         errors.push(
-          `${dockerfilePath} uses Debian snapshot ${snapshot[1]} before it is seven days old.`,
+          `${dockerfilePath} uses Debian snapshot ${snapshot[2]} before it is seven days old.`,
         );
       }
     }
