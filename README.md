@@ -146,7 +146,7 @@ chmod 600 secrets/home_assistant_token secrets/mcp_auth_token
 Edit `.env` and set at least:
 
 ```dotenv
-MCP_IMAGE=lemanjo/hac-mcp:nightly
+MCP_IMAGE=lemanjo/hac-mcp:1.0.0
 HOME_ASSISTANT_URL=http://192.168.1.10:8123
 HA_CONFIG_PATH=/absolute/path/to/home-assistant/config
 MCP_SETTINGS_FILE=./config.yaml
@@ -155,7 +155,7 @@ PGID=1000
 MCP_MODE=read_only
 ```
 
-`PUID` and `PGID` must identify a non-root user that can read and write `HA_CONFIG_PATH`. Use an exact release image instead of `nightly` when one is available.
+`PUID` and `PGID` must identify a non-root user that can read and write `HA_CONFIG_PATH`. The example pins an exact release so upgrades are deliberate.
 
 Start the published image:
 
@@ -229,7 +229,7 @@ In **Docker > Add Container**, enable **Advanced View** and use:
 | Field            | Value                                                                                                                                                      |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Name             | `hac-mcp`                                                                                                                                                  |
-| Repository       | `lemanjo/hac-mcp:nightly`, or an exact release tag                                                                                                         |
+| Repository       | `lemanjo/hac-mcp:1.0.0`, or another exact release tag                                                                                                      |
 | Network Type     | `bridge`                                                                                                                                                   |
 | Privileged       | `Off`                                                                                                                                                      |
 | Port             | Container `3000`, host `3000`, TCP                                                                                                                         |
@@ -404,7 +404,7 @@ These variables are read by `docker-compose.yml` to configure the container:
 
 | Variable                | Default                          | Required | Purpose                                                                                 |
 | ----------------------- | -------------------------------- | -------- | --------------------------------------------------------------------------------------- |
-| `MCP_IMAGE`             | `home-assistant-admin-mcp:local` | No       | Image to build or run. Use `lemanjo/hac-mcp:nightly` or an exact release tag.           |
+| `MCP_IMAGE`             | `home-assistant-admin-mcp:local` | No       | Image to build or run. Use an exact tag such as `lemanjo/hac-mcp:1.0.0`.                |
 | `MCP_BIND_IP`           | `127.0.0.1`                      | No       | Host address that publishes the MCP port. Use `0.0.0.0` for intentional LAN access.     |
 | `MCP_PUBLISHED_PORT`    | `3000`                           | No       | Port exposed on the Docker host.                                                        |
 | `HA_CONFIG_PATH`        | None                             | Yes      | Existing host configuration directory mounted at `/ha-config`.                          |
@@ -468,7 +468,7 @@ pnpm test
 pnpm build
 ```
 
-Every container build reports all known runtime vulnerabilities and fails on fixable findings. Publishing workflows scan both `linux/amd64` and `linux/arm64` before pushing. Every push to `main` publishes `lemanjo/hac-mcp:nightly` and an immutable `nightly-<commit-sha>` image. GitHub releases publish versioned images for both architectures.
+Every container build reports all known runtime vulnerabilities and fails on fixable findings. Publishing workflows scan both `linux/amd64` and `linux/arm64` before pushing. Every push to `main` publishes the moving `lemanjo/hac-mcp:nightly` tag and an immutable `nightly-<commit-sha>` image. GitHub releases publish exact, major/minor, major, and `latest` tags for both architectures.
 
 > [!NOTE]
 > This project is built with AI-assisted development tools.
