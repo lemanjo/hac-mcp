@@ -58,6 +58,7 @@ export interface CollectSubscriptionOptions<T> {
 
 interface PendingCommand {
   commandType: string;
+  subscription: Subscription | undefined;
   resolve: (value: unknown) => void;
   reject: (error: AppError) => void;
   timer: NodeJS.Timeout;
@@ -191,8 +192,7 @@ export class HomeAssistantWebSocketClient {
   ): Promise<T> {
     validateCommand(command);
     await this.connect();
-    const response = await this.sendReadyCommand<T>(command, options);
-    return response.result;
+    return this.sendReadyCommand<T>(command, options);
   }
 
   async subscribeEvents<T = Record<string, unknown>>(
@@ -543,7 +543,7 @@ export class HomeAssistantWebSocketClient {
       return;
     }
     if (type === "pong") {
-      this.resolvePending(id, undefined);
+      if (this.pending.get(id)?.subscription === undefined) this.resolvePending(id, undefined);
       return;
     }
     if (type === "event") {
@@ -563,7 +563,8 @@ export class HomeAssistantWebSocketClient {
   private async sendReadyCommand<T>(
     command: WebSocketCommand,
     options: WebSocketCommandOptions = {},
-  ): Promise<{ id: number; result: T }> {
+    subscription?: Subscription,
+  ): Promise<T> {
     const socket = this.socket;
     if (!this.ready || socket?.readyState !== WebSocket.OPEN) {
       throw new AppError("HA_WS_DISCONNECTED", "Home Assistant WebSocket is not connected", {
@@ -612,7 +613,8 @@ export class HomeAssistantWebSocketClient {
 
       const pending: PendingCommand = {
         commandType: command.type,
-        resolve: (result) => resolve({ id, result: result as T }),
+        subscription,
+        resolve: (result) => resolve(result as T),
         reject,
         timer,
         signal: options.signal,
@@ -637,24 +639,7 @@ export class HomeAssistantWebSocketClient {
     if (subscription.activationPromise !== undefined) return subscription.activationPromise;
     if (this.subscriptions.get(subscription.logicalId) !== subscription) return;
 
-    const socket = this.socket;
-    const activation = (async () => {
-      const response = await this.sendReadyCommand<unknown>(subscription.command);
-      if (
-        this.subscriptions.get(subscription.logicalId) === subscription &&
-        this.socket === socket &&
-        this.connected
-      ) {
-        subscription.wireId = response.id;
-        this.wireSubscriptions.set(response.id, subscription.logicalId);
-      } else if (this.socket === socket && this.connected) {
-        try {
-          await this.unsubscribeWire(response.id);
-        } catch (error) {
-          this.reportError(error);
-        }
-      }
-    })();
+    const activation = this.sendReadyCommand<void>(subscription.command, {}, subscription);
     subscription.activationPromise = activation;
     try {
       await activation;
@@ -692,7 +677,20 @@ export class HomeAssistantWebSocketClient {
 
   private resolvePending(id: number, value: unknown): void {
     const pending = this.takePending(id);
-    pending?.resolve(value);
+    if (pending === undefined) return;
+
+    const subscription = pending.subscription;
+    if (subscription !== undefined && this.connected) {
+      if (this.subscriptions.get(subscription.logicalId) === subscription) {
+        // The next event frame can be handled before the command promise resumes.
+        subscription.wireId = id;
+        this.wireSubscriptions.set(id, subscription.logicalId);
+      } else {
+        // The subscription was removed while waiting for acknowledgement.
+        void this.unsubscribeWire(id).catch((error) => this.reportError(error));
+      }
+    }
+    pending.resolve(value);
   }
 
   private rejectPending(id: number, error: AppError): void {

@@ -1,4 +1,4 @@
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function createMockServer(
-  onCommand: (socket: WebSocket, message: Record<string, unknown>) => void,
+  onCommand: (socket: WebSocket, message: Record<string, unknown>, transport: Socket) => void,
   validToken = "valid-token",
 ): Promise<MockServer> {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -36,7 +36,7 @@ async function createMockServer(
     server.once("listening", resolve);
     server.once("error", reject);
   });
-  server.on("connection", (socket) => {
+  server.on("connection", (socket, request) => {
     socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.8.2" }));
     socket.on("message", (raw: RawData) => {
       const buffer = Array.isArray(raw)
@@ -55,7 +55,7 @@ async function createMockServer(
         );
         return;
       }
-      onCommand(socket, message);
+      onCommand(socket, message, request.socket);
     });
   });
   const port = (server.address() as AddressInfo).port;
@@ -132,21 +132,22 @@ describe("HomeAssistantWebSocketClient", () => {
     }
   });
 
-  it("assembles system-health subscription events instead of treating it as a command", async () => {
-    const mock = await createMockServer((socket, message) => {
+  it("collects system-health events sent in the same batch as the subscription acknowledgement", async () => {
+    let subscriptionId: unknown;
+    const unsubscribedIds: unknown[] = [];
+    const initial = { type: "initial", data: { recorder: { info: { recording: true } } } };
+    const finish = { type: "finish" };
+    const mock = await createMockServer((socket, message, transport) => {
       if (message.type === "system_health/info") {
+        subscriptionId = message.id;
+        // Flush the acknowledgement and events together, as separate WebSocket frames.
+        transport.cork();
         result(socket, message.id, null);
-        setTimeout(() => {
-          socket.send(
-            JSON.stringify({
-              id: message.id,
-              type: "event",
-              event: { type: "initial", data: { recorder: { info: { recording: true } } } },
-            }),
-          );
-          socket.send(JSON.stringify({ id: message.id, type: "event", event: { type: "finish" } }));
-        }, 5);
+        socket.send(JSON.stringify({ id: message.id, type: "event", event: initial }));
+        socket.send(JSON.stringify({ id: message.id, type: "event", event: finish }));
+        transport.uncork();
       } else if (message.type === "unsubscribe_events") {
+        unsubscribedIds.push(message.subscription);
         result(socket, message.id, null);
       }
     });
@@ -162,10 +163,13 @@ describe("HomeAssistantWebSocketClient", () => {
     );
 
     try {
-      await expect(client.getSystemHealth()).resolves.toMatchObject({
+      await expect(client.getSystemHealth()).resolves.toEqual({
         complete: true,
-        domains: { recorder: { info: { recording: true } } },
+        domains: initial.data,
+        raw_events: [initial, finish],
       });
+      expect(subscriptionId).toEqual(expect.any(Number));
+      expect(unsubscribedIds).toEqual([subscriptionId]);
     } finally {
       await client.close();
     }
