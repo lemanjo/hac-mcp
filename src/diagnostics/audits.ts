@@ -1,3 +1,4 @@
+import { effectiveDeviceArea } from "../shared/registry-areas.js";
 import type {
   AreaRegistryEntry,
   ConfigEntry,
@@ -564,7 +565,7 @@ export function findEntitiesWithoutArea(
 
   for (const entity of entityRegistry) {
     const device = entity.device_id ? devices.get(entity.device_id) : undefined;
-    const areaId = entity.area_id ?? device?.area_id ?? undefined;
+    const areaId = entity.area_id ?? effectiveDeviceArea(device, devices);
     let reason: EntityWithoutArea["reason"] | undefined;
     if (entity.device_id && !device && !entity.area_id) reason = "missing_device";
     else if (!areaId) reason = "unassigned";
@@ -587,12 +588,14 @@ export function findDevicesWithoutArea(
   deviceRegistry: readonly DeviceRegistryEntry[],
   areaRegistry?: readonly AreaRegistryEntry[],
 ): DeviceWithoutArea[] {
+  const devices = new Map(deviceRegistry.map((device) => [device.id, device]));
   const areaIds = areaRegistry ? new Set(areaRegistry.map((area) => area.area_id)) : undefined;
   return deviceRegistry
     .flatMap((device): DeviceWithoutArea[] => {
-      const reason = !device.area_id
+      const areaId = effectiveDeviceArea(device, devices);
+      const reason = !areaId
         ? "unassigned"
-        : areaIds && !areaIds.has(device.area_id)
+        : areaIds && !areaIds.has(areaId)
           ? "unknown_area"
           : undefined;
       if (!reason) return [];
@@ -602,9 +605,7 @@ export function findDevicesWithoutArea(
           device_id: device.id,
           ...(name === undefined ? {} : { name }),
           reason,
-          ...(device.area_id === null || device.area_id === undefined
-            ? {}
-            : { area_id: device.area_id }),
+          ...(areaId === undefined ? {} : { area_id: areaId }),
         },
       ];
     })

@@ -10,6 +10,7 @@ export interface ToolDefinition<TSchema extends z.ZodType<Record<string, unknown
   title: string;
   description: string;
   risk: Risk;
+  adminOnly?: boolean;
   resolveRisk?: (input: z.infer<TSchema>) => Risk;
   schema: TSchema;
   source?: OperationMeta["source"];
@@ -49,7 +50,9 @@ export class ToolRegistrar {
         _meta: {
           "com.home-assistant-admin-mcp/risk": definition.risk,
           "com.home-assistant-admin-mcp/dynamic-risk": definition.resolveRisk !== undefined,
-          "com.home-assistant-admin-mcp/mode-required": modeForRisk(definition.risk),
+          "com.home-assistant-admin-mcp/mode-required": definition.adminOnly
+            ? "admin"
+            : modeForRisk(definition.risk),
           "com.home-assistant-admin-mcp/source": definition.source ?? "derived",
         },
       },
@@ -62,6 +65,7 @@ export class ToolRegistrar {
           this.app.policy.authorize({
             risk: effectiveRisk,
             operation: definition.name,
+            adminOnly: definition.adminOnly === true,
             confirm: input.confirm === true,
             ...authorization,
           });

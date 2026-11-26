@@ -81,6 +81,7 @@ export interface DeviceRegistryEntry {
   name?: string | null;
   name_by_user?: string | null;
   area_id?: string | null;
+  parent_device_id?: string | null;
   config_entries?: string[];
   config_entry_id?: string;
   disabled_by?: string | null;

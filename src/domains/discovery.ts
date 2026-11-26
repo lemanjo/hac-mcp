@@ -1,5 +1,6 @@
 import type { HomeAssistantClient } from "../homeassistant/client.js";
 import { AppError } from "../shared/errors.js";
+import { effectiveDeviceArea } from "../shared/registry-areas.js";
 import type {
   AreaRegistryEntry,
   ConfigEntry,
@@ -44,6 +45,7 @@ export interface EnrichedArea extends AreaRegistryEntry {
 }
 
 export interface EnrichedDevice extends DeviceRegistryEntry {
+  effective_area_id?: string;
   area?: AreaReference;
   entities: EntityReference[];
   integrations: IntegrationReference[];
@@ -53,7 +55,7 @@ export interface EnrichedDevice extends DeviceRegistryEntry {
 export interface EnrichedEntity extends EntityRegistryEntry {
   domain: string;
   effective_area_id?: string;
-  area_source?: "entity" | "device";
+  area_source?: "entity" | "device" | "parent_device";
   area?: AreaReference;
   device?: DeviceReference;
   integrations: IntegrationReference[];
@@ -204,7 +206,7 @@ export class DiscoveryService {
 
     const enrichedEntities: EnrichedEntity[] = entityRegistry.map((entity) => {
       const device = entity.device_id ? deviceById.get(entity.device_id) : undefined;
-      const effectiveAreaId = entity.area_id ?? device?.area_id ?? undefined;
+      const effectiveAreaId = entity.area_id ?? effectiveDeviceArea(device, deviceById);
       const area = effectiveAreaId ? areaById.get(effectiveAreaId) : undefined;
       const integrationIds = new Set<string>();
       if (entity.config_entry_id) integrationIds.add(entity.config_entry_id);
@@ -221,11 +223,16 @@ export class DiscoveryService {
         ...entity,
         domain: entity.entity_id.split(".", 1)[0] ?? "",
         ...(effectiveAreaId === undefined ? {} : { effective_area_id: effectiveAreaId }),
-        ...(entity.area_id
-          ? { area_source: "entity" as const }
-          : device?.area_id
-            ? { area_source: "device" as const }
-            : {}),
+        ...(effectiveAreaId === undefined
+          ? {}
+          : {
+              area_source:
+                entity.area_id != null
+                  ? "entity"
+                  : device?.area_id != null
+                    ? "device"
+                    : "parent_device",
+            }),
         ...(area === undefined ? {} : { area: areaReference(area) }),
         ...(device === undefined ? {} : { device: deviceReference(device) }),
         integrations,
@@ -241,7 +248,8 @@ export class DiscoveryService {
     }
 
     const enrichedDevices: EnrichedDevice[] = deviceRegistry.map((device) => {
-      const area = device.area_id ? areaById.get(device.area_id) : undefined;
+      const effectiveAreaId = effectiveDeviceArea(device, deviceById);
+      const area = effectiveAreaId ? areaById.get(effectiveAreaId) : undefined;
       const entities = entitiesByDevice.get(device.id) ?? [];
       const integrations = integrationIdsForDevice(device)
         .flatMap((entryId): IntegrationReference[] => {
@@ -254,6 +262,7 @@ export class DiscoveryService {
       );
       return {
         ...device,
+        ...(effectiveAreaId === undefined ? {} : { effective_area_id: effectiveAreaId }),
         ...(area === undefined ? {} : { area: areaReference(area) }),
         entities: entities
           .map(entityReference)
@@ -264,7 +273,7 @@ export class DiscoveryService {
     });
 
     const enrichedAreas: EnrichedArea[] = areaRegistry.map((area) => {
-      const devices = enrichedDevices.filter((device) => device.area_id === area.area_id);
+      const devices = enrichedDevices.filter((device) => device.effective_area_id === area.area_id);
       const entities = enrichedEntities.filter(
         (entity) => entity.effective_area_id === area.area_id,
       );
@@ -300,7 +309,7 @@ export class DiscoveryService {
         entity.integrations.some(({ entry_id }) => entry_id === integration.entry_id),
       );
       const relatedAreaIds = new Set([
-        ...devices.flatMap((device) => device.area_id ?? []),
+        ...devices.flatMap((device) => device.effective_area_id ?? []),
         ...entities.flatMap((entity) => entity.effective_area_id ?? []),
       ]);
       return {
@@ -417,7 +426,7 @@ export class DiscoveryService {
         (device) =>
           notDisabled(device, options.includeDisabled ?? true) &&
           (options.deviceId === undefined || device.id === options.deviceId) &&
-          (options.areaId === undefined || device.area_id === options.areaId) &&
+          (options.areaId === undefined || device.effective_area_id === options.areaId) &&
           (options.integrationId === undefined ||
             device.integrations.some(({ entry_id }) => entry_id === options.integrationId)) &&
           (options.platform === undefined || device.platforms.includes(options.platform)) &&

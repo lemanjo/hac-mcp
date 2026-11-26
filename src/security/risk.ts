@@ -11,6 +11,7 @@ const allowedByMode: Record<Mode, ReadonlySet<Risk>> = {
 export interface AuthorizationRequest {
   risk: Risk;
   operation: string;
+  adminOnly?: boolean;
   confirm?: boolean;
   domain?: string;
   entityId?: string;
@@ -21,12 +22,17 @@ export class PermissionPolicy {
   constructor(private readonly settings: Settings) {}
 
   authorize(request: AuthorizationRequest): void {
-    if (!allowedByMode[this.settings.mcp.mode].has(request.risk)) {
+    const mode = this.settings.mcp.mode;
+    if (!allowedByMode[mode].has(request.risk) || (request.adminOnly && mode !== "admin")) {
       throw new AppError(
         "OPERATION_NOT_PERMITTED",
         `${request.operation} is disabled in MCP mode`,
         {
-          details: { mode: this.settings.mcp.mode, required_risk: request.risk },
+          details: {
+            mode,
+            required_risk: request.risk,
+            ...(request.adminOnly ? { required_mode: "admin" } : {}),
+          },
         },
       );
     }

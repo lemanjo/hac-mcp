@@ -175,12 +175,21 @@ export interface TraceDiagnostic {
   message: string;
 }
 
+export interface ChildTraceLink {
+  path: string;
+  step_index: number;
+  domain: TraceDomain;
+  item_id: string;
+  run_id: string;
+}
+
 export interface TraceFailureExplanation {
   outcome: "succeeded" | "failed" | "running" | "not_triggered" | "unknown";
   code: string;
   summary: string;
   last_step: string | null;
   diagnostics: TraceDiagnostic[];
+  child_traces: ChildTraceLink[];
 }
 
 export interface TraceReadResult {
@@ -759,6 +768,7 @@ export function explainTraceFailure(trace: TraceDetails): TraceFailureExplanatio
     summary: appendDiagnostic ? `${selected.summary}: ${firstDiagnostic}` : selected.summary,
     last_step: lastStep,
     diagnostics,
+    child_traces: collectChildTraceLinks(trace),
   };
 }
 
@@ -1140,6 +1150,30 @@ function collectTraceDiagnostics(trace: TraceDetails): TraceDiagnostic[] {
     }
   }
   return diagnostics;
+}
+
+function collectChildTraceLinks(trace: TraceDetails): ChildTraceLink[] {
+  if (!isRecord(trace.trace)) return [];
+  const links: ChildTraceLink[] = [];
+  for (const path of Object.keys(trace.trace).sort()) {
+    const steps = trace.trace[path];
+    if (!Array.isArray(steps)) continue;
+    steps.forEach((step, step_index) => {
+      if (!isRecord(step) || !isRecord(step.child_id)) return;
+      const { domain, item_id, run_id } = step.child_id;
+      if (
+        (domain === "automation" || domain === "script") &&
+        typeof item_id === "string" &&
+        isValidResourceId(domain, item_id) &&
+        typeof run_id === "string" &&
+        run_id.length <= MAX_IDENTIFIER_LENGTH &&
+        RESOURCE_ID_PATTERN.test(run_id)
+      ) {
+        links.push({ path, step_index, domain, item_id, run_id });
+      }
+    });
+  }
+  return links;
 }
 
 function findNotTriggeredReason(trace: TraceDetails): string | null {

@@ -1,5 +1,6 @@
 import type { HomeAssistantClient } from "../homeassistant/client.js";
 import { AppError } from "../shared/errors.js";
+import { effectiveDeviceArea } from "../shared/registry-areas.js";
 import type {
   AreaRegistryEntry,
   ConfigEntry,
@@ -12,7 +13,7 @@ export interface EntityDetails extends EntityRegistryEntry {
   state: EntityState | null;
   device: DeviceRegistryEntry | null;
   area: AreaRegistryEntry | null;
-  area_assignment: "entity" | "device" | null;
+  area_assignment: "entity" | "device" | "parent_device" | null;
   config_entry: ConfigEntry | null;
   config_entries: ConfigEntry[];
 }
@@ -377,7 +378,7 @@ function enrichEntities(
     .sort((left, right) => left.entity_id.localeCompare(right.entity_id))
     .map((entity) => {
       const device = entity.device_id ? (deviceById.get(entity.device_id) ?? null) : null;
-      const areaId = entity.area_id ?? device?.area_id ?? null;
+      const areaId = entity.area_id ?? effectiveDeviceArea(device, deviceById);
       const configEntryIds = new Set(device?.config_entries ?? []);
       if (device?.config_entry_id) configEntryIds.add(device.config_entry_id);
       if (entity.config_entry_id) configEntryIds.add(entity.config_entry_id);
@@ -386,7 +387,14 @@ function enrichEntities(
         state: stateById.get(entity.entity_id.toLowerCase()) ?? null,
         device,
         area: areaId ? (areaById.get(areaId) ?? null) : null,
-        area_assignment: entity.area_id ? "entity" : device?.area_id ? "device" : null,
+        area_assignment:
+          areaId === undefined
+            ? null
+            : entity.area_id != null
+              ? "entity"
+              : device?.area_id != null
+                ? "device"
+                : "parent_device",
         config_entry: entity.config_entry_id
           ? (configEntryById.get(entity.config_entry_id) ?? null)
           : null,
@@ -406,16 +414,18 @@ function enrichDevices(
   areas: readonly AreaRegistryEntry[],
   configEntries: readonly ConfigEntry[],
 ): DeviceDetails[] {
+  const deviceById = new Map(devices.map((device) => [device.id, device]));
   const areaById = new Map(areas.map((area) => [area.area_id, area]));
   const configEntryById = new Map(configEntries.map((entry) => [entry.entry_id, entry]));
   return [...devices]
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((device) => {
+      const areaId = effectiveDeviceArea(device, deviceById);
       const entryIds = new Set(device.config_entries ?? []);
       if (device.config_entry_id) entryIds.add(device.config_entry_id);
       return {
         ...device,
-        area: device.area_id ? (areaById.get(device.area_id) ?? null) : null,
+        area: areaId ? (areaById.get(areaId) ?? null) : null,
         entities: entities
           .filter((entity) => entity.device_id === device.id)
           .sort((left, right) => left.entity_id.localeCompare(right.entity_id)),
@@ -442,7 +452,7 @@ function enrichAreas(
     )
     .map((area) => {
       const areaDevices = devices
-        .filter((device) => device.area_id === area.area_id)
+        .filter((device) => effectiveDeviceArea(device, deviceById) === area.area_id)
         .sort((left, right) => left.id.localeCompare(right.id));
       const direct = entities
         .filter((entity) => entity.area_id === area.area_id)
@@ -453,7 +463,7 @@ function enrichAreas(
             !entity.area_id &&
             entity.device_id !== null &&
             entity.device_id !== undefined &&
-            deviceById.get(entity.device_id)?.area_id === area.area_id,
+            effectiveDeviceArea(deviceById.get(entity.device_id), deviceById) === area.area_id,
         )
         .sort((left, right) => left.entity_id.localeCompare(right.entity_id));
       return {

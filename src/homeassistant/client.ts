@@ -115,6 +115,24 @@ export interface SystemHealth {
 }
 export type CacheScope = "all" | "services" | "registries" | "config_entries";
 
+/** Feature detection also handles commands missing because an integration is not loaded. */
+export async function versionedWsCommand<T>(
+  client: Pick<HomeAssistantClient, "wsCommand">,
+  command: WebSocketCommand,
+  minimumVersion: string,
+): Promise<T> {
+  try {
+    return await client.wsCommand<T>(command);
+  } catch (error) {
+    if (!(error instanceof AppError) || error.code !== "HA_WS_UNSUPPORTED") throw error;
+    throw new AppError(
+      "HA_WS_UNSUPPORTED",
+      `Home Assistant does not support ${command.type} on this instance; it requires Core ${minimumVersion} or newer and the corresponding integration to be loaded`,
+      { details: { command_type: command.type, minimum_version: minimumVersion }, cause: error },
+    );
+  }
+}
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_WEBSOCKET_TIMEOUT_MS = 30_000;
 const DEFAULT_REGISTRY_TTL_MS = 30_000;

@@ -13,7 +13,7 @@ import { HistoryService } from "../src/domains/history.js";
 import { IntegrationAdministration } from "../src/domains/integrations.js";
 import { LogsService } from "../src/domains/logs.js";
 import { RegistryAdministration } from "../src/domains/registries.js";
-import { explainTraceFailure, type TraceDetails } from "../src/domains/resources.js";
+import { explainTraceFailure, getTrace, type TraceDetails } from "../src/domains/resources.js";
 import { RuntimeService } from "../src/domains/runtime.js";
 import type { HomeAssistantClient } from "../src/homeassistant/client.js";
 import type { RestRequestOptions } from "../src/homeassistant/rest.js";
@@ -112,6 +112,47 @@ describe("DiscoveryService", () => {
       },
     );
   });
+
+  it("uses the parent area for child devices and honors device and entity overrides", async () => {
+    const client = mockClient({
+      getDeviceRegistry: vi.fn().mockResolvedValue([
+        { id: "strip", area_id: "kitchen" },
+        { id: "outlet", parent_device_id: "strip", area_id: null },
+        { id: "moved", parent_device_id: "strip", area_id: "office" },
+        { id: "orphan", parent_device_id: "missing" },
+      ]),
+      getEntityRegistry: vi.fn().mockResolvedValue([
+        { entity_id: "switch.outlet", device_id: "outlet" },
+        { entity_id: "switch.assigned", device_id: "outlet", area_id: "office" },
+        { entity_id: "switch.moved", device_id: "moved" },
+      ]),
+      getAreaRegistry: vi.fn().mockResolvedValue([
+        { area_id: "kitchen", name: "Kitchen" },
+        { area_id: "office", name: "Office" },
+      ]),
+      getStates: vi
+        .fn()
+        .mockResolvedValue([state("switch.outlet", "on"), state("switch.assigned", "on")]),
+    });
+    const discovery = new DiscoveryService(client);
+    const { items: devices } = await discovery.listDevices({ areaId: "kitchen" });
+    expect(devices.map(({ id }) => id)).toEqual(["outlet", "strip"]);
+    expect(devices[0]).toMatchObject({ area_id: null, effective_area_id: "kitchen" });
+    const { items: entities } = await discovery.listEntities({ areaId: "kitchen" });
+    expect(entities).toMatchObject([{ entity_id: "switch.outlet", area_source: "parent_device" }]);
+    const { items: office } = await discovery.listEntities({ areaId: "office" });
+    expect(office).toMatchObject([
+      { entity_id: "switch.assigned", area_source: "entity" },
+      { entity_id: "switch.moved", area_source: "device" },
+    ]);
+    const { items: states } = await new RuntimeService(client).listStatesByArea("kitchen");
+    expect(states.map(({ entity_id }) => entity_id)).toEqual(["switch.outlet"]);
+    const registry = new RegistryAdministration(client);
+    await expect(registry.getArea("kitchen")).resolves.toMatchObject({
+      devices: [{ id: "outlet" }, { id: "strip" }],
+      device_assigned_entities: [{ entity_id: "switch.outlet" }],
+    });
+  });
 });
 
 describe("RuntimeService state filtering", () => {
@@ -198,6 +239,69 @@ describe("ControlService live validation", () => {
   });
 });
 
+describe("target previews", () => {
+  it("asks Home Assistant to explain exclusions and reports the remaining distinct entities", async () => {
+    const wsCommand = vi.fn().mockResolvedValue({
+      includes: [
+        {
+          type: "floor",
+          id: "downstairs",
+          entities: ["light.kitchen", "light.hall"],
+          referenced_areas: ["kitchen", "hall"],
+          referenced_devices: [],
+        },
+        {
+          type: "entity",
+          id: "light.hall",
+          entities: ["light.hall"],
+          referenced_areas: [],
+          referenced_devices: [],
+        },
+      ],
+      excludes: [
+        {
+          type: "area",
+          id: "kitchen",
+          removed: [{ type: "floor", id: "downstairs", entities: ["light.kitchen"] }],
+        },
+      ],
+    });
+    const callService = vi.fn();
+    const control = new ControlService(mockClient({ wsCommand, callService }));
+    await expect(
+      control.explainTarget(
+        {
+          floor_id: "downstairs",
+          entity_id: "light.hall",
+          exclude: { area_id: "kitchen" },
+        },
+        { primaryEntitiesOnly: false },
+      ),
+    ).resolves.toMatchObject({
+      excludes: [{ id: "kitchen", removed: [{ entities: ["light.kitchen"] }] }],
+      resolved_entities: ["light.hall"],
+    });
+    expect(wsCommand).toHaveBeenCalledExactlyOnceWith({
+      type: "explain_target",
+      target: { floor_id: "downstairs", entity_id: "light.hall", exclude: { area_id: "kitchen" } },
+      expand_group: true,
+      primary_entities_only: false,
+    });
+    expect(callService).not.toHaveBeenCalled();
+  });
+
+  it("reports the minimum version when the command is unavailable", async () => {
+    const wsCommand = vi
+      .fn()
+      .mockRejectedValue(new AppError("HA_WS_UNSUPPORTED", "Unknown command"));
+    const control = new ControlService(mockClient({ wsCommand }));
+    await expect(control.explainTarget({ area_id: "kitchen" })).rejects.toMatchObject({
+      code: "HA_WS_UNSUPPORTED",
+      details: { command_type: "explain_target", minimum_version: "2026.11.0" },
+    });
+  });
+});
+
 describe("HistoryService", () => {
   it("normalizes IDs and times and constructs Home Assistant history query flags", async () => {
     const restRequest = vi
@@ -239,6 +343,83 @@ describe("HistoryService", () => {
     ).toThrowError(expect.objectContaining({ code: "HA_INVALID_TIME_RANGE" }));
     expect(restRequest).not.toHaveBeenCalled();
   });
+});
+
+describe("action history", () => {
+  const range = { startTime: "2026-11-24T11:00:00+01:00", endTime: "2026-11-24T11:20:00+01:00" };
+
+  it("returns only metadata and target IDs, filtering before newest-first pagination", async () => {
+    const wsCommand = vi.fn().mockResolvedValue([
+      { when: 1760, domain: "alarm_control_panel", service: "alarm_arm_home" },
+      { when: 1770, domain: "light", service: "turn_on" },
+      {
+        when: 1765,
+        domain: "alarm_control_panel",
+        service: "alarm_disarm",
+        context_id: "CTX123",
+        context_domain: "automation",
+        context_entity_id: "automation.arrival",
+        context_message: "private message",
+        service_data: {
+          entity_id: ["alarm_control_panel.house", { token: "private token" }],
+          area_id: "downstairs",
+          exclude: { entity_id: "alarm_control_panel.garage", pin: "1234" },
+          code: "1234",
+          vars: { nested: "private text" },
+        },
+      },
+    ]);
+    const history = new HistoryService(mockClient({ wsCommand }));
+    await expect(
+      history.getActionHistory({ ...range, domain: "alarm_control_panel", limit: 1 }),
+    ).resolves.toEqual({
+      items: [
+        {
+          when: 1765,
+          domain: "alarm_control_panel",
+          service: "alarm_disarm",
+          context_id: "CTX123",
+          context_domain: "automation",
+          context_entity_id: "automation.arrival",
+          target: {
+            entity_id: ["alarm_control_panel.house"],
+            area_id: ["downstairs"],
+            exclude: { entity_id: ["alarm_control_panel.garage"] },
+          },
+        },
+      ],
+      pagination: { limit: 1, offset: 0, total: 2, has_more: true },
+    });
+    expect(wsCommand).toHaveBeenCalledExactlyOnceWith({
+      type: "logbook/get_action_calls",
+      start_time: "2026-11-24T10:00:00.000Z",
+      end_time: "2026-11-24T10:20:00.000Z",
+    });
+  });
+
+  it.each([range.startTime, "2026-11-24T09:00:00Z", "2026-11-25T10:00:01Z"])(
+    "rejects a zero, negative, or oversized time range (%s) before contacting Home Assistant",
+    async (endTime) => {
+      const wsCommand = vi.fn();
+      const history = new HistoryService(mockClient({ wsCommand }));
+      await expect(history.getActionHistory({ ...range, endTime })).rejects.toMatchObject({
+        code: "HA_INVALID_TIME_RANGE",
+      });
+      expect(wsCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["HA_PERMISSION_DENIED", "HA_WS_UNSUPPORTED"])(
+    "preserves the %s error code",
+    async (code) => {
+      const wsCommand = vi
+        .fn()
+        .mockRejectedValue(new AppError(code, "Home Assistant rejected the command"));
+      await expect(
+        new HistoryService(mockClient({ wsCommand })).getActionHistory(range),
+      ).rejects.toMatchObject({ code });
+    },
+  );
 });
 
 describe("automation editor mutations", () => {
@@ -571,7 +752,52 @@ describe("trace failure explanations", () => {
         },
         { path: "z/path[0]", kind: "error", message: "z-error" },
       ],
+      child_traces: [],
     });
+  });
+
+  it("links each repeat iteration to its exact child run without fetching child traces", async () => {
+    const wsCommand = vi.fn().mockResolvedValue({
+      script_execution: "finished",
+      trace: {
+        "action/0/repeat/sequence/0": [
+          { child_id: { domain: "script", item_id: "set_lights", run_id: "run-a" } },
+          { child_id: { domain: "script", item_id: "set_lights", run_id: "run-b" } },
+        ],
+        "action/1": [{ child_id: { domain: "automation", item_id: "auto-42", run_id: "run-c" } }],
+        "action/2": [{ child_id: { domain: "light", item_id: "invalid", run_id: "run-d" } }],
+      },
+    });
+    const { explanation } = await getTrace(
+      mockClient({ wsCommand }),
+      "automation",
+      "parent",
+      "run-parent",
+    );
+    expect(explanation.child_traces).toEqual([
+      {
+        path: "action/0/repeat/sequence/0",
+        step_index: 0,
+        domain: "script",
+        item_id: "set_lights",
+        run_id: "run-a",
+      },
+      {
+        path: "action/0/repeat/sequence/0",
+        step_index: 1,
+        domain: "script",
+        item_id: "set_lights",
+        run_id: "run-b",
+      },
+      {
+        path: "action/1",
+        step_index: 0,
+        domain: "automation",
+        item_id: "auto-42",
+        run_id: "run-c",
+      },
+    ]);
+    expect(wsCommand).toHaveBeenCalledOnce();
   });
 });
 

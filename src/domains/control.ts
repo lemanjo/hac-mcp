@@ -3,6 +3,7 @@ import type {
   HomeAssistantServiceDefinition,
   ServiceCallResponse,
 } from "../homeassistant/client.js";
+import { versionedWsCommand } from "../homeassistant/client.js";
 import { AppError } from "../shared/errors.js";
 
 export const MAX_SERVICE_TARGETS_PER_KIND = 100;
@@ -16,6 +17,21 @@ export interface ServiceTarget {
   area_id?: TargetValue;
   floor_id?: TargetValue;
   label_id?: TargetValue;
+}
+
+export interface TargetSelection extends ServiceTarget {
+  exclude?: ServiceTarget;
+}
+
+interface TargetItem {
+  type: string;
+  id: string;
+  entities: string[];
+}
+
+interface TargetExplanation {
+  includes: (TargetItem & { referenced_areas: string[]; referenced_devices: string[] })[];
+  excludes: { type: string; id: string; removed: TargetItem[] }[];
 }
 
 export type ServiceTargetInput = ServiceTarget | string | readonly string[];
@@ -55,6 +71,41 @@ const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isTargetItem(value: unknown): value is TargetItem & Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    typeof value.type === "string" &&
+    typeof value.id === "string" &&
+    isStringArray(value.entities)
+  );
+}
+
+function isTargetExplanation(value: unknown): value is TargetExplanation {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.includes) &&
+    value.includes.every(
+      (item) =>
+        isTargetItem(item) &&
+        isStringArray(item.referenced_areas) &&
+        isStringArray(item.referenced_devices),
+    ) &&
+    Array.isArray(value.excludes) &&
+    value.excludes.every(
+      (item: unknown) =>
+        isRecord(item) &&
+        typeof item.type === "string" &&
+        typeof item.id === "string" &&
+        Array.isArray(item.removed) &&
+        item.removed.every(isTargetItem),
+    )
+  );
 }
 
 function hasControlCharacter(value: string): boolean {
@@ -227,6 +278,41 @@ function validateAgainstDefinition(
 /** Validated Home Assistant controls. Authorization policy belongs to the caller/MCP layer. */
 export class ControlService {
   constructor(readonly client: HomeAssistantClient) {}
+
+  async explainTarget(
+    target: TargetSelection,
+    options: { expandGroup?: boolean; primaryEntitiesOnly?: boolean } = {},
+  ): Promise<TargetExplanation & { resolved_entities: string[] }> {
+    const { exclude, ...include } = target;
+    const normalized = normalizeTarget(include);
+    const excluded = exclude === undefined ? undefined : normalizeTarget(exclude);
+    if (Object.keys(normalized).length === 0) {
+      throw new AppError("HA_INVALID_SERVICE_TARGET", "At least one inclusion target is required");
+    }
+    const result = await versionedWsCommand<unknown>(
+      this.client,
+      {
+        type: "explain_target",
+        target: { ...normalized, ...(excluded === undefined ? {} : { exclude: excluded }) },
+        expand_group: options.expandGroup ?? true,
+        primary_entities_only: options.primaryEntitiesOnly ?? true,
+      },
+      "2026.11.0",
+    );
+    if (!isTargetExplanation(result)) {
+      throw new AppError(
+        "HA_INVALID_RESPONSE",
+        "Home Assistant returned an invalid target preview",
+      );
+    }
+    const resolved = new Set(result.includes.flatMap(({ entities }) => entities));
+    for (const exclusion of result.excludes) {
+      for (const { entities } of exclusion.removed) {
+        for (const entity of entities) resolved.delete(entity);
+      }
+    }
+    return { ...result, resolved_entities: [...resolved].sort() };
+  }
 
   callService<T = unknown>(input: SafeServiceCall): Promise<ServiceCallResponse<T>>;
   callService<T = unknown>(

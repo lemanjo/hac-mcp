@@ -251,6 +251,35 @@ export function registerRuntimeTools(registrar: ToolRegistrar, app: Application)
   });
 
   registrar.register({
+    name: "get_action_history",
+    title: "Get Action History",
+    description:
+      "List recorded action calls with declared targets and context, newest first, over at most 24 hours. Omits raw service data. Requires Home Assistant 2026.11 or newer and a Home Assistant administrator token.",
+    risk: "READ",
+    adminOnly: true,
+    schema: z.object({
+      start_time: timeRangeFields.start_time,
+      end_time: timeRangeFields.end_time.unwrap(),
+      domain: identifier.optional().describe("Filter by action domain"),
+      service: identifier.optional().describe("Filter by unqualified action name"),
+      context_id: opaqueId.optional().describe("Only actions with this exact context ID"),
+      ...pageFields,
+    }),
+    source: "websocket",
+    stability: "internal",
+    handler: ({ start_time, end_time, domain, service, context_id, limit, offset }) =>
+      app.history.getActionHistory({
+        startTime: start_time,
+        endTime: end_time,
+        limit,
+        offset,
+        ...(domain === undefined ? {} : { domain }),
+        ...(service === undefined ? {} : { service }),
+        ...(context_id === undefined ? {} : { contextId: context_id }),
+      }),
+  });
+
+  registrar.register({
     name: "get_events",
     title: "Get Events",
     description: "Collect a bounded one-shot batch of live Home Assistant events.",

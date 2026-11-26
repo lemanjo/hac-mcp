@@ -18,18 +18,33 @@ function oneOrMany<T extends z.ZodType<string>>(schema: T, label: string) {
     .describe(`One ${label} or an array of up to ${MAX_SERVICE_TARGETS_PER_KIND}`);
 }
 
+const targetFields = {
+  entity_id: oneOrMany(entityId, "entity ID").optional(),
+  device_id: oneOrMany(targetId, "device ID").optional(),
+  area_id: oneOrMany(targetId, "area ID").optional(),
+  floor_id: oneOrMany(targetId, "floor ID").optional(),
+  label_id: oneOrMany(targetId, "label ID").optional(),
+};
+
 const serviceTargetSchema = z
-  .object({
-    entity_id: oneOrMany(entityId, "entity ID").optional(),
-    device_id: oneOrMany(targetId, "device ID").optional(),
-    area_id: oneOrMany(targetId, "area ID").optional(),
-    floor_id: oneOrMany(targetId, "floor ID").optional(),
-    label_id: oneOrMany(targetId, "label ID").optional(),
-  })
+  .strictObject(targetFields)
   .refine((target) => Object.values(target).some((value) => value !== undefined), {
     message: "At least one service target is required",
   })
   .describe("Home Assistant service target, kept separate from service_data");
+
+const targetSelectionSchema = z
+  .strictObject({
+    ...targetFields,
+    exclude: z.strictObject(targetFields).optional().describe("Targets to subtract"),
+  })
+  .refine(
+    (target) =>
+      Object.keys(targetFields).some((key) => target[key as keyof ServiceTarget] !== undefined),
+    {
+      message: "At least one inclusion target is required",
+    },
+  );
 
 type ParsedServiceTarget = z.infer<typeof serviceTargetSchema>;
 
@@ -88,6 +103,34 @@ function serviceRisk(domain: string, service: string): Risk {
 }
 
 export function registerControlTools(registrar: ToolRegistrar, app: Application): void {
+  registrar.register({
+    name: "explain_target",
+    title: "Explain Target",
+    description:
+      "Preview a Home Assistant target's matching entities and exclusion effects without calling a service. Requires Home Assistant 2026.11 or newer.",
+    risk: "READ",
+    schema: z.object({
+      target: targetSelectionSchema,
+      expand_group: z.boolean().default(true).describe("Expand old-style groups into members"),
+      primary_entities_only: z
+        .boolean()
+        .default(true)
+        .describe("Use Home Assistant's primary-entity filtering"),
+    }),
+    source: "websocket",
+    stability: "internal",
+    handler: ({ target, expand_group, primary_entities_only }) => {
+      const { exclude, ...include } = target;
+      return app.control.explainTarget(
+        {
+          ...serviceTarget(include),
+          ...(exclude === undefined ? {} : { exclude: serviceTarget(exclude) }),
+        },
+        { expandGroup: expand_group, primaryEntitiesOnly: primary_entities_only },
+      );
+    },
+  });
+
   registrar.register({
     name: "call_service",
     title: "Call Service",

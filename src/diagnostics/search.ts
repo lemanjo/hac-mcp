@@ -1,3 +1,4 @@
+import { effectiveDeviceArea } from "../shared/registry-areas.js";
 import type {
   AreaRegistryEntry,
   ConfigEntry,
@@ -231,7 +232,7 @@ function buildEntityDocuments(input: UnifiedSearchInput): SearchDocument[] {
     const state = stateById.get(id);
     const entity = registryById.get(id);
     const device = entity?.device_id ? deviceById.get(entity.device_id) : undefined;
-    const areaId = entity?.area_id ?? device?.area_id;
+    const areaId = entity?.area_id ?? effectiveDeviceArea(device, deviceById);
     const area = areaId ? areaById.get(areaId) : undefined;
     const friendlyName = text(state?.attributes.friendly_name);
     const title = friendlyName ?? entity?.name ?? entity?.original_name ?? id;
@@ -275,14 +276,17 @@ function buildEntityDocuments(input: UnifiedSearchInput): SearchDocument[] {
 }
 
 function buildDeviceDocuments(input: UnifiedSearchInput): SearchDocument[] {
+  const devices = input.deviceRegistry ?? input.devices ?? [];
+  const deviceById = new Map(devices.map((device) => [device.id, device]));
   const areaById = new Map(
     (input.areaRegistry ?? input.areas ?? []).map((area) => [area.area_id, area]),
   );
-  return [...(input.deviceRegistry ?? input.devices ?? [])]
+  return [...devices]
     .sort((left, right) => compareText(left.id, right.id))
     .map((device) => {
       const title = device.name_by_user ?? device.name ?? device.id;
-      const area = device.area_id ? areaById.get(device.area_id) : undefined;
+      const areaId = effectiveDeviceArea(device, deviceById);
+      const area = areaId ? areaById.get(areaId) : undefined;
       return {
         kind: "device",
         id: device.id,
@@ -295,7 +299,7 @@ function buildDeviceDocuments(input: UnifiedSearchInput): SearchDocument[] {
           field(
             "metadata",
             join([
-              device.area_id,
+              areaId,
               device.config_entry_id,
               ...(device.config_entries ?? []),
               ...(device.labels ?? []),

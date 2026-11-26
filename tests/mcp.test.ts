@@ -338,6 +338,8 @@ describe("MCP tool registration", () => {
         "list_custom_component_files",
         "read_custom_component_source",
         "search_home_assistant",
+        "explain_target",
+        "get_action_history",
       ]),
     );
   });
@@ -427,7 +429,9 @@ describe("MCP tool registration", () => {
       const source = configuration._meta[SOURCE_KEY];
       expect(["READ", "CONTROL", "CONFIG", "HIGH_IMPACT"]).toContain(risk);
       expect(configuration.description, name).toContain(`Risk: ${risk}`);
-      expect(configuration._meta[MODE_KEY], name).toBe(requiredMode[risk]);
+      expect(configuration._meta[MODE_KEY], name).toBe(
+        name === "get_action_history" ? "admin" : requiredMode[risk],
+      );
       expect(["rest", "websocket", "config_api", "filesystem", "derived"]).toContain(source);
       expect(configuration.annotations.readOnlyHint, name).toBe(risk === "READ");
       expect(configuration.annotations.destructiveHint, name).toBe(
@@ -462,6 +466,50 @@ describe("MCP tool registration", () => {
     });
     expect(byName.get("find_unused_helpers")!.configuration.annotations.openWorldHint).toBe(false);
   });
+
+  it("accepts exclusions for target previews and rejects them for service execution", () => {
+    const tools = new Map(
+      registeredTools().map(({ name, configuration }) => [name, configuration]),
+    );
+    const explain = tools.get("explain_target")!.inputSchema.shape.target!;
+    const call = tools.get("call_service")!.inputSchema.shape.target!;
+    const target = { floor_id: "downstairs", exclude: { area_id: "kitchen" } };
+    expect(explain.safeParse(target).success).toBe(true);
+    expect(explain.safeParse({ exclude: target.exclude }).success).toBe(false);
+    expect(call.safeParse(target).success).toBe(false);
+  });
+
+  it.each(["read_only", "control", "admin"] as const)(
+    "allows action history only in admin mode (mode: %s)",
+    async (mode) => {
+      const getActionHistory = vi.fn().mockResolvedValue({ items: [] });
+      const app = {
+        policy: new PermissionPolicy(settings(mode)),
+        history: { getActionHistory },
+      } as unknown as Parameters<typeof registerTools>[1];
+      const tool = registeredTools(app).find(({ name }) => name === "get_action_history")!;
+      const handler = tool.handler as (input: Record<string, unknown>) => Promise<unknown>;
+      const result = await handler({
+        start_time: "2026-11-24T10:00:00Z",
+        end_time: "2026-11-24T10:20:00Z",
+        limit: 100,
+        offset: 0,
+      });
+      expect(tool.configuration.annotations.readOnlyHint).toBe(true);
+      if (mode === "admin") {
+        expect(result).toMatchObject({ structuredContent: { success: true, data: { items: [] } } });
+        expect(getActionHistory).toHaveBeenCalledOnce();
+      } else {
+        expect(result).toMatchObject({
+          structuredContent: {
+            success: false,
+            error: { code: "OPERATION_NOT_PERMITTED", details: { required_mode: "admin" } },
+          },
+        });
+        expect(getActionHistory).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("escalates administrative generic service calls before invoking Home Assistant", async () => {
     const control = { callService: vi.fn() };

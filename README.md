@@ -19,6 +19,21 @@ It does not manage Home Assistant add-ons, Supervisor backups, Docker, or the ho
 
 Some administrative tools use Home Assistant interfaces that can change between Home Assistant releases. Test administrative changes after upgrading Home Assistant.
 
+### Target previews and action history
+
+These tools require Home Assistant Core 2026.11 or newer:
+
+| Tool                 | Use                                                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `explain_target`     | Preview the entities matched by an area, floor, label, device, or entity target and see what `exclude` removes. |
+| `get_action_history` | Inspect recorded action calls, declared target IDs, and context over an explicit window of up to 24 hours.      |
+
+`explain_target` works in `read_only` mode. It previews general target membership; individual actions can apply additional filtering. Exclusions are supported by this preview tool.
+
+`get_action_history` requires `MCP_MODE=admin`, a Home Assistant administrator token, and the Logbook integration. Results are paginated, newest first. They include recorded calls rather than confirmation that those calls succeeded, and omit raw action parameters and free-text context.
+
+`get_trace` and `explain_trace` include links to child runs when Home Assistant records them. Use the link's `domain`, `item_id`, and `run_id` to fetch that run with `get_trace`.
+
 ## Permission modes
 
 Set `MCP_MODE` to one of these values:

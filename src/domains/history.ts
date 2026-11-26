@@ -1,10 +1,13 @@
 import type { HomeAssistantClient, ServiceCallExtendedResponse } from "../homeassistant/client.js";
+import { versionedWsCommand } from "../homeassistant/client.js";
 import { AppError } from "../shared/errors.js";
+import { paginate, type PageInput } from "../shared/types.js";
 
 export const MAX_HISTORY_ENTITY_IDS = 100;
 export const MAX_LOGBOOK_FILTER_IDS = 100;
 export const MAX_STATISTIC_IDS = 100;
 export const MAX_LOGBOOK_ENTRIES = 5_000;
+const MAX_ACTION_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 export type TimeInput = string | number | Date;
 
@@ -59,6 +62,34 @@ export interface LogbookEntry {
   context_message?: string;
   [key: string]: unknown;
 }
+
+export interface ActionHistoryQuery extends PageInput {
+  startTime: TimeInput;
+  endTime: TimeInput;
+  domain?: string;
+  service?: string;
+  contextId?: string;
+}
+
+const ACTION_TARGET_KEYS = ["entity_id", "device_id", "area_id", "floor_id", "label_id"] as const;
+type ActionTargets = Partial<Record<(typeof ACTION_TARGET_KEYS)[number], string[]>>;
+
+interface ActionHistoryEntry {
+  when: number;
+  domain: string;
+  service: string;
+  context_id?: string;
+  context_user_id?: string;
+  context_event_type?: string;
+  context_domain?: string;
+  context_service?: string;
+  context_entity_id?: string;
+  target: ActionTargets & { exclude?: ActionTargets };
+}
+
+const ACTION_IDENTIFIER = /^[a-z0-9_]+$/;
+const ACTION_ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
+const CONTEXT_IDENTIFIER = /^[a-z0-9_-]+$/i;
 
 export type StatisticPeriod = "5minute" | "hour" | "day" | "week" | "month" | "year";
 export type StatisticType = "change" | "last_reset" | "max" | "mean" | "min" | "state" | "sum";
@@ -206,6 +237,66 @@ function flag(parameters: URLSearchParams, name: string, enabled: boolean | unde
   if (enabled === true) parameters.append(name, "");
 }
 
+function actionIdentifier(value: unknown, pattern: RegExp): string | undefined {
+  return typeof value === "string" && value.length <= 255 && pattern.test(value)
+    ? value
+    : undefined;
+}
+
+function actionTargetIds(value: unknown): ActionTargets {
+  const targets: ActionTargets = {};
+  if (!isRecord(value)) return targets;
+  for (const key of ACTION_TARGET_KEYS) {
+    const raw = value[key];
+    const candidates = Array.isArray(raw)
+      ? raw
+      : key === "entity_id" && typeof raw === "string"
+        ? raw.split(",").map((id) => id.trim())
+        : [raw];
+    const ids = candidates.flatMap((candidate: unknown) => {
+      const id = actionIdentifier(
+        candidate,
+        key === "entity_id" ? ACTION_ENTITY_ID : ACTION_IDENTIFIER,
+      );
+      return id === undefined ? [] : [id];
+    });
+    if (ids.length > 0) targets[key] = [...new Set(ids)];
+  }
+  return targets;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function actionHistoryEntry(raw: unknown): ActionHistoryEntry | undefined {
+  if (!isRecord(raw) || typeof raw.when !== "number" || !Number.isFinite(raw.when)) return;
+  const domain = actionIdentifier(raw.domain, ACTION_IDENTIFIER);
+  const service = actionIdentifier(raw.service, ACTION_IDENTIFIER);
+  if (domain === undefined || service === undefined) return;
+
+  const contextId = actionIdentifier(raw.context_id, CONTEXT_IDENTIFIER);
+  const userId = actionIdentifier(raw.context_user_id, CONTEXT_IDENTIFIER);
+  const eventType = actionIdentifier(raw.context_event_type, ACTION_IDENTIFIER);
+  const contextDomain = actionIdentifier(raw.context_domain, ACTION_IDENTIFIER);
+  const contextService = actionIdentifier(raw.context_service, ACTION_IDENTIFIER);
+  const entityId = actionIdentifier(raw.context_entity_id, ACTION_ENTITY_ID);
+  const targets = actionTargetIds(raw.service_data);
+  const exclude = isRecord(raw.service_data) ? actionTargetIds(raw.service_data.exclude) : {};
+  return {
+    when: raw.when,
+    domain,
+    service,
+    ...(contextId === undefined ? {} : { context_id: contextId }),
+    ...(userId === undefined ? {} : { context_user_id: userId }),
+    ...(eventType === undefined ? {} : { context_event_type: eventType }),
+    ...(contextDomain === undefined ? {} : { context_domain: contextDomain }),
+    ...(contextService === undefined ? {} : { context_service: contextService }),
+    ...(entityId === undefined ? {} : { context_entity_id: entityId }),
+    target: { ...targets, ...(Object.keys(exclude).length === 0 ? {} : { exclude }) },
+  };
+}
+
 /** Recorder-backed state history, activity/logbook, and statistics queries. */
 export class HistoryService {
   constructor(readonly client: HomeAssistantClient) {}
@@ -296,6 +387,40 @@ export class HistoryService {
       );
     }
     return entries.length <= limit ? entries : entries.slice(-limit);
+  }
+
+  async getActionHistory(query: ActionHistoryQuery) {
+    const startTime = time(query.startTime, "action history start time");
+    const endTime = time(query.endTime, "action history end time");
+    const duration = Date.parse(endTime) - Date.parse(startTime);
+    if (duration <= 0 || duration > MAX_ACTION_HISTORY_WINDOW_MS) {
+      throw new AppError(
+        "HA_INVALID_TIME_RANGE",
+        "Action history requires a positive time range of at most 24 hours",
+      );
+    }
+    const raw = await versionedWsCommand<unknown>(
+      this.client,
+      { type: "logbook/get_action_calls", start_time: startTime, end_time: endTime },
+      "2026.11.0",
+    );
+    if (!Array.isArray(raw)) {
+      throw new AppError("HA_INVALID_RESPONSE", "Home Assistant returned invalid action history");
+    }
+    // Project only known metadata; service payloads and free-text context can contain secrets.
+    const entries = raw.flatMap((row: unknown) => {
+      const entry = actionHistoryEntry(row);
+      return entry === undefined ||
+        (query.domain !== undefined && entry.domain !== query.domain) ||
+        (query.service !== undefined && entry.service !== query.service) ||
+        (query.contextId !== undefined && entry.context_id !== query.contextId)
+        ? []
+        : [entry];
+    });
+    return paginate(
+      entries.sort((left, right) => right.when - left.when),
+      query,
+    );
   }
 
   async getStatistics(query: StatisticsQuery): Promise<RecorderStatisticsResponse> {

@@ -344,7 +344,7 @@ function registerTraceTools(registrar: ToolRegistrar, app: Application): void {
   registrar.register({
     name: "get_trace",
     title: "Get Trace",
-    description: "Get one automation or script trace and its derived failure explanation.",
+    description: "Get one automation or script trace, its outcome, and links to child runs.",
     risk: "READ",
     schema: z.object({ domain: traceDomain, item_id: traceItemId, run_id: traceRunId }),
     source: "websocket",
@@ -374,7 +374,8 @@ function registerTraceTools(registrar: ToolRegistrar, app: Application): void {
   registrar.register({
     name: "explain_trace",
     title: "Explain Trace",
-    description: "Explain the outcome and diagnostics of one automation or script trace.",
+    description:
+      "Explain the outcome, diagnostics, and child-run links of an automation or script trace.",
     risk: "READ",
     schema: z.object({ domain: traceDomain, item_id: traceItemId, run_id: traceRunId }),
     source: "derived",

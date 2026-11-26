@@ -328,12 +328,14 @@ describe("diagnostic audits", () => {
   it("finds invalid area assignments while honoring direct and inherited areas", () => {
     const devices: DeviceRegistryEntry[] = [
       { id: "inherited", area_id: "kitchen" },
+      { id: "child", parent_device_id: "inherited" },
       { id: "unassigned", name: "Loose device" },
       { id: "unknown", area_id: "removed-area" },
     ];
     const entities: EntityRegistryEntry[] = [
       { entity_id: "sensor.direct", area_id: "kitchen" },
       { entity_id: "sensor.inherited", device_id: "inherited" },
+      { entity_id: "sensor.child", device_id: "child" },
       { entity_id: "sensor.unassigned" },
       { entity_id: "sensor.missing_device", device_id: "missing" },
       { entity_id: "sensor.unknown_area", area_id: "removed-area" },

@@ -8,6 +8,7 @@ import type {
 } from "../homeassistant/client.js";
 import type { HomeAssistantEvent } from "../homeassistant/websocket.js";
 import { AppError } from "../shared/errors.js";
+import { effectiveDeviceArea } from "../shared/registry-areas.js";
 import type { EntityState, PageInput, Pagination } from "../shared/types.js";
 import { paginate } from "../shared/types.js";
 
@@ -109,7 +110,7 @@ export class RuntimeService {
         const entityId = state.entity_id.toLowerCase();
         const entity = entityById.get(entityId);
         const device = entity?.device_id ? deviceById.get(entity.device_id) : undefined;
-        const areaId = entity?.area_id ?? device?.area_id ?? undefined;
+        const areaId = entity?.area_id ?? effectiveDeviceArea(device, deviceById);
         const domain = entityId.split(".", 1)[0] ?? "";
         const friendlyName = state.attributes.friendly_name;
         return (
