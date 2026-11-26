@@ -161,7 +161,7 @@ chmod 600 secrets/home_assistant_token secrets/mcp_auth_token
 Edit `.env` and set at least:
 
 ```dotenv
-MCP_IMAGE=lemanjo/hac-mcp:1.1.0
+MCP_IMAGE=lemanjo/hac-mcp:1.1.1
 HOME_ASSISTANT_URL=http://192.168.1.10:8123
 HA_CONFIG_PATH=/absolute/path/to/home-assistant/config
 MCP_SETTINGS_FILE=./config.yaml
@@ -244,7 +244,7 @@ In **Docker > Add Container**, enable **Advanced View** and use:
 | Field            | Value                                                                                                                                                      |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Name             | `hac-mcp`                                                                                                                                                  |
-| Repository       | `lemanjo/hac-mcp:1.1.0`, or another exact release tag                                                                                                      |
+| Repository       | `lemanjo/hac-mcp:1.1.1`, or another exact release tag                                                                                                      |
 | Network Type     | `bridge`                                                                                                                                                   |
 | Privileged       | `Off`                                                                                                                                                      |
 | Port             | Container `3000`, host `3000`, TCP                                                                                                                         |
@@ -419,7 +419,7 @@ These variables are read by `docker-compose.yml` to configure the container:
 
 | Variable                | Default                          | Required | Purpose                                                                                 |
 | ----------------------- | -------------------------------- | -------- | --------------------------------------------------------------------------------------- |
-| `MCP_IMAGE`             | `home-assistant-admin-mcp:local` | No       | Image to build or run. Use an exact tag such as `lemanjo/hac-mcp:1.1.0`.                |
+| `MCP_IMAGE`             | `home-assistant-admin-mcp:local` | No       | Image to build or run. Use an exact tag such as `lemanjo/hac-mcp:1.1.1`.                |
 | `MCP_BIND_IP`           | `127.0.0.1`                      | No       | Host address that publishes the MCP port. Use `0.0.0.0` for intentional LAN access.     |
 | `MCP_PUBLISHED_PORT`    | `3000`                           | No       | Port exposed on the Docker host.                                                        |
 | `HA_CONFIG_PATH`        | None                             | Yes      | Existing host configuration directory mounted at `/ha-config`.                          |
