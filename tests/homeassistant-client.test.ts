@@ -8,7 +8,7 @@ import { HomeAssistantEditorRestAdapter } from "../src/domains/resources.js";
 import { TtlCache } from "../src/homeassistant/cache.js";
 import { HomeAssistantClient } from "../src/homeassistant/client.js";
 import { HomeAssistantRestClient } from "../src/homeassistant/rest.js";
-import type { HomeAssistantWebSocketClient } from "../src/homeassistant/websocket.js";
+import { HomeAssistantWebSocketClient } from "../src/homeassistant/websocket.js";
 
 interface CapturedRequest {
   method: string;
@@ -217,6 +217,33 @@ describe("TtlCache and HomeAssistantClient caching", () => {
     await expect(client.getServices()).resolves.toEqual([{ domain: "switch", services: {} }]);
     expect(request).toHaveBeenCalledTimes(2);
     await client.close();
+  });
+});
+
+describe("HomeAssistantClient system health", () => {
+  it("returns the latest check values when collection ends without a finish event", async () => {
+    const events = [
+      {
+        type: "initial",
+        data: { example: { info: { a: { type: "pending" }, b: { type: "pending" } } } },
+      },
+      { type: "update", domain: "example", key: "a", success: true, data: true },
+      { type: "update", domain: "example", key: "a", success: true, data: null },
+      { type: "update", domain: "example", key: "a", success: true },
+    ];
+    const websocket = new HomeAssistantWebSocketClient({ baseUrl, token: "token" });
+    vi.spyOn(websocket, "collectSubscription").mockResolvedValue(events);
+    const client = new HomeAssistantClient({ url: baseUrl, token: "token" }, { websocket });
+
+    try {
+      await expect(client.getSystemHealth()).resolves.toEqual({
+        complete: false,
+        domains: { example: { info: { a: null, b: { type: "pending" } } } },
+        raw_events: events,
+      });
+    } finally {
+      await client.close();
+    }
   });
 });
 

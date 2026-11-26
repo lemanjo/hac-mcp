@@ -132,19 +132,44 @@ describe("HomeAssistantWebSocketClient", () => {
     }
   });
 
-  it("collects system-health events sent in the same batch as the subscription acknowledgement", async () => {
+  it("applies system-health updates sent in the same batch as the subscription acknowledgement", async () => {
     let subscriptionId: unknown;
     const unsubscribedIds: unknown[] = [];
-    const initial = { type: "initial", data: { recorder: { info: { recording: true } } } };
+    const initial = {
+      type: "initial",
+      data: {
+        recorder: {
+          manage_url: "/config/recorder",
+          info: { recording: true, database: { type: "pending" }, migration: { type: "pending" } },
+        },
+        homeassistant: { info: { version: "2026.8.2" } },
+      },
+    };
+    const success = {
+      type: "update",
+      domain: "recorder",
+      key: "database",
+      success: true,
+      data: "ok",
+    };
+    const failure = {
+      type: "update",
+      domain: "recorder",
+      key: "migration",
+      success: false,
+      error: { type: "failed", error: "unknown" },
+    };
     const finish = { type: "finish" };
+    const events = [initial, success, failure, finish];
     const mock = await createMockServer((socket, message, transport) => {
       if (message.type === "system_health/info") {
         subscriptionId = message.id;
         // Flush the acknowledgement and events together, as separate WebSocket frames.
         transport.cork();
         result(socket, message.id, null);
-        socket.send(JSON.stringify({ id: message.id, type: "event", event: initial }));
-        socket.send(JSON.stringify({ id: message.id, type: "event", event: finish }));
+        for (const event of events) {
+          socket.send(JSON.stringify({ id: message.id, type: "event", event }));
+        }
         transport.uncork();
       } else if (message.type === "unsubscribe_events") {
         unsubscribedIds.push(message.subscription);
@@ -165,8 +190,14 @@ describe("HomeAssistantWebSocketClient", () => {
     try {
       await expect(client.getSystemHealth()).resolves.toEqual({
         complete: true,
-        domains: initial.data,
-        raw_events: [initial, finish],
+        domains: {
+          recorder: {
+            manage_url: "/config/recorder",
+            info: { recording: true, database: "ok", migration: failure.error },
+          },
+          homeassistant: initial.data.homeassistant,
+        },
+        raw_events: events,
       });
       expect(subscriptionId).toEqual(expect.any(Number));
       expect(unsubscribedIds).toEqual([subscriptionId]);

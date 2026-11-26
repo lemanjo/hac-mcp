@@ -109,6 +109,7 @@ export interface SystemLogEntry {
 }
 
 export interface SystemHealth {
+  /** Whether the subscription sent `finish`, regardless of individual check outcomes. */
   complete: boolean;
   domains: Record<string, unknown>;
   raw_events: unknown[];
@@ -282,8 +283,26 @@ export class HomeAssistantClient {
         until: (event) => event.type === "finish",
       },
     );
-    const initial = events.find((event) => event.type === "initial");
-    const domains = initial !== undefined && isRecord(initial.data) ? initial.data : {};
+    let domains: Record<string, unknown> = {};
+    for (const event of events) {
+      if (event.type === "initial" && isRecord(event.data)) {
+        domains = { ...event.data };
+        continue;
+      }
+      if (event.type !== "update") continue;
+      const { domain, key, success } = event;
+      if (
+        typeof domain !== "string" ||
+        typeof key !== "string" ||
+        !Object.hasOwn(domains, domain)
+      ) {
+        continue;
+      }
+      const value = success === true ? event.data : success === false ? event.error : undefined;
+      const entry = domains[domain];
+      if (value === undefined || !isRecord(entry) || !isRecord(entry.info)) continue;
+      domains[domain] = { ...entry, info: { ...entry.info, [key]: value } };
+    }
     return {
       complete: events.some((event) => event.type === "finish"),
       domains,
