@@ -23,19 +23,29 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --prod --frozen-lockfile
 
 FROM debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 AS runtime
+# Take the pending glibc and nghttp2 fixes without enabling other proposed updates.
 RUN printf '%s\n' \
       'Types: deb' \
-      'URIs: http://snapshot.debian.org/archive/debian/20260815T000000Z' \
-      'Suites: trixie trixie-updates' \
+      'URIs: http://snapshot.debian.org/archive/debian/20261118T000000Z' \
+      'Suites: trixie trixie-updates trixie-proposed-updates' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
       '' \
       'Types: deb' \
-      'URIs: http://snapshot.debian.org/archive/debian-security/20260822T000000Z' \
+      'URIs: http://snapshot.debian.org/archive/debian-security/20261126T060000Z' \
       'Suites: trixie-security' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'Package: libc-bin libc6 libnghttp2-14' \
+      'Pin: release n=trixie-proposed-updates' \
+      'Pin-Priority: 500' \
+      '' \
+      'Package: *' \
+      'Pin: release n=trixie-proposed-updates' \
+      'Pin-Priority: -1' \
+      > /etc/apt/preferences.d/proposed-updates \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get dist-upgrade -y \
     && apt-get install -y --no-install-recommends \

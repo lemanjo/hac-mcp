@@ -14,9 +14,13 @@ registries:
   default: https://registry.npmjs.org/
 
 overrides:
+  "@hono/node-server": 2.1.9
+  body-parser: 2.4.0
   content-type: 2.0.0
-  hono: 4.13.2
+  hono: 4.13.19
+  qs: 6.17.1
   undici-types: 6.19.2
+  zod: 4.6.7
 
 allowBuilds:
   esbuild: true
